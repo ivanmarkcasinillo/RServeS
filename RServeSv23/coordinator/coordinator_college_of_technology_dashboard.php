@@ -346,6 +346,98 @@ $result->free();
             padding: 2rem;
         }
 
+        #docVerifyModal .modal-dialog {
+            max-width: min(1400px, calc(100vw - 2rem));
+            width: min(1400px, calc(100vw - 2rem));
+            height: 100vh;
+            height: 100dvh;
+            margin: 0 auto;
+            padding: 1rem 0;
+        }
+
+        #docVerifyModal .modal-content {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        #docVerifyModal .modal-body {
+            display: flex;
+            flex: 1 1 auto;
+            overflow: hidden;
+        }
+
+        #docVerifyContent {
+            display: flex;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
+        #docVerifyContent .doc-verify-layout {
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
+        #docVerifyContent .doc-meta-column,
+        #docVerifyContent .doc-preview-column {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        #docVerifyContent .doc-meta-column {
+            overflow-y: auto;
+        }
+
+        #docVerifyContent .doc-preview-pane {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        #docVerifyContent .doc-preview-frame,
+        #docVerifyContent .doc-preview-image {
+            width: 100%;
+            height: 100%;
+            display: block;
+            border: 0;
+        }
+
+        #docVerifyContent .doc-preview-image {
+            object-fit: contain;
+        }
+
+        @media (max-width: 767.98px) {
+            #docVerifyModal .modal-dialog {
+                max-width: 100vw;
+                width: 100vw;
+                margin: 0;
+                padding: 0;
+            }
+
+            #docVerifyModal .modal-content {
+                border-radius: 0;
+            }
+
+            #docVerifyModal .modal-body {
+                overflow-y: auto;
+            }
+
+            #docVerifyContent .doc-verify-layout {
+                min-height: auto;
+            }
+
+            #docVerifyContent .doc-meta-column {
+                border-right: 0 !important;
+                border-bottom: 1px solid var(--bs-border-color);
+                margin-bottom: 1rem;
+                padding-bottom: 1rem;
+            }
+
+            #docVerifyContent .doc-preview-pane {
+                min-height: 60vh;
+            }
+        }
+
         /* Cards */
         .stat-card {
             background: white;
@@ -761,7 +853,7 @@ $result->free();
 
 <!-- Document Verification Modal -->
 <div class="modal fade" id="docVerifyModal" tabindex="-1">
-    <div class="modal-dialog modal-xl modal-dialog-centered">
+    <div class="modal-dialog modal-xl">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Document Verification</h5>

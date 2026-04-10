@@ -51,6 +51,7 @@ if ($res->num_rows === 0) {
 $doc = $res->fetch_assoc();
 $status = $doc['status'] ?? 'Pending';
 $file_path = $doc['file_path'] ?? ''; // Default column
+$normalized_file_path = str_replace('\\', '/', trim((string) $file_path, " \t\n\r\0\x0B/"));
 
 // Special handling for Agreement which might be generated or have signatures
 if ($doc_type === 'agreement') {
@@ -62,34 +63,55 @@ if ($doc_type === 'agreement') {
     // For now, let's try to show what's there.
 }
 
-// Construct full path
-// Assuming file_path is stored as relative to uploads/ or root
-// e.g. "waivers/abc.pdf" -> "../uploads/waivers/abc.pdf"
-// We need to check if it starts with "uploads/" or not.
+// Resolve both the server file path and the public URL used by the browser.
 $display_path = '';
-if (strpos($file_path, 'uploads/') === 0) {
-    $display_path = "../" . $file_path;
-} else {
-    // Try to guess based on known structure
-    $display_path = "../uploads/" . $file_path;
-}
+$display_url = '';
+$file_exists = false;
 
-// Check if file exists
-if (!file_exists($display_path) && !empty($file_path)) {
-    // Try without "uploads/" prefix if it was double
-    if (file_exists("../" . $file_path)) {
-        $display_path = "../" . $file_path;
+if ($normalized_file_path !== '') {
+    $path_candidates = [];
+
+    if (strpos($normalized_file_path, 'uploads/') === 0) {
+        $path_candidates[] = [
+            'server' => dirname(__DIR__) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $normalized_file_path),
+            'url' => (defined('BASE_PATH') ? BASE_PATH : '../') . ltrim($normalized_file_path, '/')
+        ];
+    } else {
+        $path_candidates[] = [
+            'server' => dirname(__DIR__) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $normalized_file_path),
+            'url' => (defined('BASE_PATH') ? BASE_PATH : '../') . 'uploads/' . ltrim($normalized_file_path, '/')
+        ];
+        $path_candidates[] = [
+            'server' => dirname(__DIR__) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $normalized_file_path),
+            'url' => (defined('BASE_PATH') ? BASE_PATH : '../') . ltrim($normalized_file_path, '/')
+        ];
+    }
+
+    foreach ($path_candidates as $candidate) {
+        if (file_exists($candidate['server'])) {
+            $display_path = $candidate['server'];
+            $display_url = $candidate['url'];
+            $file_exists = true;
+            break;
+        }
+    }
+
+    if (!$file_exists) {
+        $fallback_url = strpos($normalized_file_path, 'uploads/') === 0
+            ? (defined('BASE_PATH') ? BASE_PATH : '../') . ltrim($normalized_file_path, '/')
+            : (defined('BASE_PATH') ? BASE_PATH : '../') . 'uploads/' . ltrim($normalized_file_path, '/');
+        $display_url = $fallback_url;
     }
 }
 
-$ext = strtolower(pathinfo($display_path, PATHINFO_EXTENSION));
+$ext = strtolower(pathinfo($normalized_file_path, PATHINFO_EXTENSION));
 $is_image = in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'heic']);
 $is_pdf = ($ext === 'pdf');
 
 ?>
 
-<div class="row">
-    <div class="col-md-4 border-end">
+<div class="row doc-verify-layout">
+    <div class="col-md-4 border-end doc-meta-column">
         <h6 class="fw-bold text-muted mb-3">Document Info</h6>
         <div class="mb-3">
             <label class="small text-muted">Status</label>
@@ -144,23 +166,29 @@ $is_pdf = ($ext === 'pdf');
         <?php endif; ?>
     </div>
     
-    <div class="col-md-8">
+    <div class="col-md-8 doc-preview-column">
         <h6 class="fw-bold text-muted mb-3">Preview</h6>
-        <div class="bg-light border rounded d-flex align-items-center justify-content-center" style="min-height: 400px; overflow: hidden;">
+        <div class="bg-light border rounded d-flex align-items-center justify-content-center doc-preview-pane">
             <?php if (empty($file_path)): ?>
                 <div class="text-center text-muted">
                     <i class="fas fa-file-alt fa-3x mb-2"></i>
                     <p>No file attachment found.</p>
                 </div>
+            <?php elseif (!$file_exists): ?>
+                <div class="text-center text-muted px-4">
+                    <i class="fas fa-triangle-exclamation fa-3x mb-3 text-warning"></i>
+                    <p class="mb-2 fw-semibold">Preview unavailable</p>
+                    <p class="mb-0">The document record exists, but the uploaded file is missing on this server.</p>
+                </div>
             <?php elseif ($is_image): ?>
-                <img src="<?= htmlspecialchars($display_path) ?>" class="img-fluid" alt="Document Preview">
+                <img src="<?= htmlspecialchars($display_url) ?>" class="doc-preview-image" alt="Document Preview">
             <?php elseif ($is_pdf): ?>
-                <iframe src="<?= htmlspecialchars($display_path) ?>" width="100%" height="450px" style="border:none;"></iframe>
+                <iframe src="<?= htmlspecialchars($display_url) ?>" class="doc-preview-frame" title="Document Preview"></iframe>
             <?php else: ?>
                 <div class="text-center">
                     <i class="fas fa-file-download fa-3x text-primary mb-3"></i>
                     <p class="mb-3">File type not supported for preview.</p>
-                    <a href="<?= htmlspecialchars($display_path) ?>" target="_blank" class="btn btn-primary btn-sm">
+                    <a href="<?= htmlspecialchars($display_url) ?>" target="_blank" class="btn btn-primary btn-sm">
                         <i class="fas fa-download me-1"></i> Download File
                     </a>
                 </div>

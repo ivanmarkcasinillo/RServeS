@@ -18,7 +18,7 @@
         <h1>System Unavailable</h1>
         <p>We are currently experiencing technical difficulties with our database connection.</p>
         <p>Please check back in a few minutes. If the problem persists, please contact the system administrator.</p>
-        <a href="index.php" class="btn">Return to Home</a>
+        <a href="index.html" class="btn">Return to Home</a>
     </div>
 </body>
 </html>

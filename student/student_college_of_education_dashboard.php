@@ -5,11 +5,27 @@ date_default_timezone_set('Asia/Manila');
 session_start();
 require "dbconnect.php";
 include "check_expiration.php";
+require_once __DIR__ . "/task_backend.php";
+rserves_student_ensure_task_schema($conn);
 
 if (empty($_SESSION['student_task_form_token'])) {
     $_SESSION['student_task_form_token'] = bin2hex(random_bytes(16));
 }
 $student_task_form_token = $_SESSION['student_task_form_token'];
+
+if (!function_exists('rserves_dashboard_view_url')) {
+    function rserves_dashboard_view_url(string $view = 'dashboard'): string
+    {
+        $self = $_SERVER['PHP_SELF'] ?? 'student_college_of_education_dashboard.php';
+        $allowed_views = ['dashboard', 'tasks', 'documents', 'notifications'];
+
+        if (!in_array($view, $allowed_views, true) || $view === 'dashboard') {
+            return $self;
+        }
+
+        return $self . '?view=' . urlencode($view);
+    }
+}
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Student') {
     header("Location: ../home2.php");
@@ -37,6 +53,12 @@ if ($check_col && $check_col->num_rows == 0) {
     $conn->query("ALTER TABLE accomplishment_reports ADD COLUMN assigner_id INT NULL DEFAULT NULL");
 }
 
+// Auto-migration: Store the originating student task directly for reliable status matching
+$check_task_col = $conn->query("SHOW COLUMNS FROM accomplishment_reports LIKE 'student_task_id'");
+if ($check_task_col && $check_task_col->num_rows == 0) {
+    $conn->query("ALTER TABLE accomplishment_reports ADD COLUMN student_task_id INT NULL DEFAULT NULL");
+}
+
 // Moved instructor fetching below
 
 if (
@@ -50,7 +72,7 @@ if (
 
 $stmt = $conn->prepare("
     SELECT s.stud_id, s.firstname, s.lastname, s.mi, s.photo, s.instructor_id, s.department_id,
-           s.year_level, s.semester, d.department_name
+           s.year_level, s.semester, s.section, d.department_name
     FROM students s
     LEFT JOIN departments d ON s.department_id = d.department_id
     WHERE s.stud_id = ?
@@ -109,6 +131,7 @@ $stmt = $conn->prepare("
     SELECT 
         id,
         student_id,
+        student_task_id,
         activity AS activity,
         work_date,
         time_start,
@@ -119,8 +142,7 @@ $stmt = $conn->prepare("
         status
     FROM accomplishment_reports
     WHERE student_id = ?
-
-    ORDER BY work_date ASC
+    ORDER BY id DESC, work_date DESC
 ");
 $stmt->bind_param("i", $student_id);
 $stmt->execute();
@@ -164,18 +186,28 @@ if (!in_array($_SESSION['role'], ['Coordinator', 'Instructor'])) {
         
         // Append Task ID for tracking if available
         $assigner_id = null;
+        $linked_student_task_id = null;
         if (!empty($_POST['prefill_stask_id'])) {
             $stask_id_val = intval($_POST['prefill_stask_id']);
+            $linked_student_task_id = $stask_id_val;
             $attempt_pattern = '%[TaskID:' . $stask_id_val . ']%';
-            $attempt_stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM accomplishment_reports WHERE student_id = ? AND activity LIKE ?");
+            $attempt_stmt = $conn->prepare("
+                SELECT COUNT(*) AS cnt
+                FROM accomplishment_reports
+                WHERE student_id = ?
+                AND (
+                    student_task_id = ?
+                    OR activity LIKE ?
+                )
+            ");
             if ($attempt_stmt) {
-                $attempt_stmt->bind_param("is", $student_id, $attempt_pattern);
+                $attempt_stmt->bind_param("iis", $student_id, $stask_id_val, $attempt_pattern);
                 $attempt_stmt->execute();
                 $attempt_cnt = intval(($attempt_stmt->get_result()->fetch_assoc()['cnt'] ?? 0));
                 $attempt_stmt->close();
                 if ($attempt_cnt >= 2) {
                     $_SESSION['flash'] = "You can only submit this task to your adviser twice.";
-                    header("Location: " . $_SERVER['PHP_SELF']);
+                    header("Location: " . rserves_dashboard_view_url('tasks'));
                     exit;
                 }
             }
@@ -238,12 +270,12 @@ if (!in_array($_SESSION['role'], ['Coordinator', 'Instructor'])) {
 
         $stmt = $conn->prepare("
            INSERT INTO accomplishment_reports 
-    (student_id, work_date, activity, time_start, time_end, hours, status, photo, photo2, assigner_id) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (student_id, work_date, activity, time_start, time_end, hours, status, photo, photo2, assigner_id, student_task_id) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
-        $stmt->bind_param("issssdsssi", 
+        $stmt->bind_param("issssdsssii", 
             $student_id, $work_date, $activity, $time_start, $time_end, 
-            $hours, $status, $photo1, $photo2, $assigner_id
+            $hours, $status, $photo1, $photo2, $assigner_id, $linked_student_task_id
         );
 
         if ($stmt->execute()) {
@@ -263,7 +295,7 @@ if (!in_array($_SESSION['role'], ['Coordinator', 'Instructor'])) {
             }
             */
             $_SESSION['flash'] = "Accomplishment submitted to adviser for approval!";
-            header("Location: " . $_SERVER['PHP_SELF']);
+            header("Location: " . rserves_dashboard_view_url('tasks'));
             exit;
         }
         $stmt->close();
@@ -483,65 +515,10 @@ if (isset($_POST['submit_time'])) {
     exit;
 }
 
-if (isset($_POST['create_verbal_task'])) {
-    $form_token = $_POST['task_form_token'] ?? '';
-    if (!hash_equals($_SESSION['student_task_form_token'] ?? '', $form_token)) {
-        $_SESSION['student_task_form_token'] = bin2hex(random_bytes(16));
-        $_SESSION['flash'] = "Task submission already processed. Please try again from the refreshed form.";
-        header("Location: ".$_SERVER['PHP_SELF']);
-        exit;
-    }
-    $_SESSION['student_task_form_token'] = bin2hex(random_bytes(16));
-    $student_task_form_token = $_SESSION['student_task_form_token'];
-
-    $task_title = trim($_POST['task_title']);
-    $task_desc = trim($_POST['task_description']);
-    $duration = $_POST['duration'];
-    $assigner_id = isset($_POST['assigner_id']) ? intval($_POST['assigner_id']) : $student['instructor_id'];
-    
-    if (!empty($task_title)) {
-        $conn->begin_transaction();
-
-        try {
-            $stmt = $conn->prepare("INSERT INTO tasks (title, description, duration, instructor_id, department_id, created_by_student, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())");
-            if (!$stmt) {
-                throw new RuntimeException($conn->error);
-            }
-
-            $stmt->bind_param("sssiii", $task_title, $task_desc, $duration, $assigner_id, $student['department_id'], $student_id);
-            if (!$stmt->execute()) {
-                $stmt_error = $stmt->error;
-                $stmt->close();
-                throw new RuntimeException($stmt_error);
-            }
-
-            $new_task_id = $stmt->insert_id;
-            $stmt->close();
-
-            $stmt2 = $conn->prepare("INSERT INTO student_tasks (task_id, student_id, status, assigned_at) VALUES (?, ?, 'Pending', NOW())");
-            if (!$stmt2) {
-                throw new RuntimeException($conn->error);
-            }
-
-            $stmt2->bind_param("ii", $new_task_id, $student_id);
-            if (!$stmt2->execute()) {
-                $stmt2_error = $stmt2->error;
-                $stmt2->close();
-                throw new RuntimeException($stmt2_error);
-            }
-
-            $stmt2->close();
-            $conn->commit();
-            $_SESSION['flash'] = "Verbal task '{$task_title}' created successfully!";
-        } catch (Throwable $e) {
-            $conn->rollback();
-            error_log("Verbal task creation failed for student {$student_id}: " . $e->getMessage());
-            $_SESSION['flash'] = "Task creation failed. Please try again.";
-        }
-
-        header("Location: ".$_SERVER['PHP_SELF']);
-        exit;
-    }
+if (isset($_POST['create_verbal_task']) || isset($_POST['task_form_token'])) {
+    $_SESSION['flash'] = rserves_create_student_verbal_task($conn, $student, $student_id, $_POST, true);
+    header("Location: " . rserves_dashboard_view_url('tasks'));
+    exit;
 }
 
 if (isset($_POST['update_task_duration'])) {
@@ -582,71 +559,7 @@ if (isset($_POST['update_task_desc'])) {
 
 // Org task creation removed
 
-$tasks = [];
-$query = "
-    SELECT 
-        st.stask_id, st.status, st.assigned_at, 
-        t.task_id, t.title, t.description, t.duration, t.created_by_student, t.created_at, t.instructor_id,
-        i.firstname as inst_fname, i.lastname as inst_lname,
-        CASE 
-            WHEN t.created_by_student = ? THEN 'verbal'
-            ELSE 'adviser'
-        END as task_type
-    FROM student_tasks st
-    INNER JOIN tasks t ON st.task_id = t.task_id
-    LEFT JOIN instructors i ON t.instructor_id = i.inst_id
-    WHERE st.student_id = ? AND st.status = 'Pending'
-    ORDER BY t.created_at DESC
-";
-
-$stmt = $conn->prepare($query);
-$stmt->bind_param("ii", $student_id, $student_id);
-$stmt->execute();
-$result = $stmt->get_result();
-while ($row = $result->fetch_assoc()) {
-    $tasks[] = $row;
-}
-$stmt->close();
-
-$deduped_tasks = [];
-$seen_task_signatures = [];
-foreach ($tasks as $task) {
-    $task_signature = implode('|', [
-        $task['title'] ?? '',
-        $task['description'] ?? '',
-        $task['duration'] ?? '',
-        $task['created_by_student'] ?? '',
-        $task['instructor_id'] ?? '',
-        $task['task_type'] ?? '',
-        $task['created_at'] ?? ''
-    ]);
-
-    if (isset($seen_task_signatures[$task_signature])) {
-        continue;
-    }
-
-    $seen_task_signatures[$task_signature] = true;
-    $deduped_tasks[] = $task;
-}
-$tasks = $deduped_tasks;
-
-// Hide tasks once the student has already complied, even if the submission is still pending approval
-$pending_tasks = [];
-foreach ($tasks as $task) {
-    $is_unavailable = false;
-    foreach ($accomplishment_reports as $ar) {
-        if (strpos($ar['activity'], '[TaskID:' . $task['stask_id'] . ']') !== false) {
-            if (in_array($ar['status'], ['Pending', 'Verified', 'Approved'], true)) {
-                $is_unavailable = true;
-                break;
-            }
-        }
-    }
-    if (!$is_unavailable) {
-        $pending_tasks[] = $task;
-    }
-}
-$tasks = $pending_tasks;
+$tasks = rserves_fetch_student_dashboard_tasks($conn, $student_id, $accomplishment_reports);
 
 // Org tasks fetching removed
 
@@ -708,6 +621,15 @@ usort($notifications, function($a, $b) {
 });
 
 $unread_count = count(array_filter($notifications, function($n) { return !$n['is_read']; }));
+
+$newly_created_task_id = intval($_SESSION['last_created_student_task_id'] ?? 0);
+unset($_SESSION['last_created_student_task_id']);
+
+$allowed_dashboard_views = ['dashboard', 'tasks', 'documents', 'notifications'];
+$initial_view = 'dashboard';
+if (isset($_GET['view']) && in_array($_GET['view'], $allowed_dashboard_views, true)) {
+    $initial_view = $_GET['view'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1014,6 +936,17 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
         .task-item:hover {
             background: white;
             box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+
+        .task-item.task-item-new {
+            background: linear-gradient(135deg, rgba(255, 248, 214, 0.95), rgba(255, 255, 255, 0.96));
+            border-color: rgba(255, 193, 7, 0.7);
+            box-shadow: 0 10px 24px rgba(255, 193, 7, 0.16);
+        }
+
+        .task-item.task-item-new:hover {
+            background: linear-gradient(135deg, rgba(255, 250, 228, 1), rgba(255, 255, 255, 1));
+            box-shadow: 0 14px 28px rgba(255, 193, 7, 0.2);
         }
         
         .btn-custom {
@@ -1441,8 +1374,14 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
             
             <!-- Flash Message -->
             <?php if (isset($_SESSION['flash'])): ?>
-                <div class="alert alert-success alert-dismissible fade show mb-4" role="alert">
-                    <i class="fas fa-check-circle me-2"></i><?= htmlspecialchars($_SESSION['flash']) ?>
+                <?php
+                    $flash_message = (string) $_SESSION['flash'];
+                    $flash_is_error = stripos($flash_message, 'failed') !== false
+                        || stripos($flash_message, 'expired') !== false
+                        || stripos($flash_message, 'please ') === 0;
+                ?>
+                <div class="alert alert-<?= $flash_is_error ? 'danger' : 'success' ?> alert-dismissible fade show mb-4" role="alert">
+                    <i class="fas <?= $flash_is_error ? 'fa-exclamation-circle' : 'fa-check-circle' ?> me-2"></i><?= htmlspecialchars($flash_message) ?>
                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
                 <?php unset($_SESSION['flash']); ?>
@@ -1665,35 +1604,13 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
                     <?php else: ?>
                         <?php foreach ($tasks as $task): ?>
                             <?php 
-                            $isVerbal = ($task['task_type'] === 'verbal');
-                            
-                            // Check for matching accomplishment report
-                            $arStatus = null;
-                            $arAttempts = 0;
-                            foreach ($accomplishment_reports as $ar) {
-                                if (strpos($ar['activity'], '[TaskID:' . $task['stask_id'] . ']') !== false) {
-                                    $arStatus = $ar['status'];
-                                    $arAttempts++;
-                                }
-                            }
-                            
-                            $displayStatus = $task['status'];
-                            $disableSubmit = false;
-                            
-                            if ($arStatus === 'Pending') {
-                                $displayStatus = 'Pending Approval';
-                                $disableSubmit = true;
-                            } elseif ($arStatus === 'Verified' || $arStatus === 'Approved') {
-                                 $displayStatus = 'Completed';
-                                 $disableSubmit = true;
-                            } elseif ($arStatus === 'Rejected') {
-                                $displayStatus = 'Rejected';
-                            }
-                            if ($arAttempts >= 2 && $displayStatus !== 'Completed') {
-                                $disableSubmit = true;
-                            }
+                            $isVerbal = !empty($task['is_verbal']);
+                            $arAttempts = intval($task['ar_attempts'] ?? 0);
+                            $displayStatus = (string)($task['display_status'] ?? ($task['status'] ?? 'Pending'));
+                            $disableSubmit = !empty($task['disable_submit']);
+                            $isJustCreated = ($newly_created_task_id > 0 && intval($task['stask_id']) === $newly_created_task_id);
                             ?>
-                            <div class="task-item">
+                            <div class="task-item<?= $isJustCreated ? ' task-item-new' : '' ?>" data-task-row-id="<?= $task['stask_id'] ?>">
                                 <div class="d-flex justify-content-between align-items-start mb-2">
                                     <div>
                                         <h5 class="fw-bold mb-1"><?= htmlspecialchars($task['title']) ?></h5>
@@ -1729,12 +1646,15 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
                                         <?php elseif($displayStatus == 'Completed'): ?>
                                              <span class="badge bg-success ms-1">Completed</span>
                                         <?php else: ?>
-                                            <span class="badge bg-warning text-dark ms-1"><?= htmlspecialchars($task['status']) ?></span>
+                                            <span class="badge bg-warning text-dark ms-1"><?= htmlspecialchars($displayStatus) ?></span>
                                         <?php endif; ?>
                                         <?php if ($arAttempts > 0): ?>
                                             <span class="badge bg-secondary ms-1"><?= intval($arAttempts) ?>/2</span>
                                         <?php endif; ?>
-                                        <small class="text-muted ms-2"><?= date('M d, Y', strtotime($task['created_at'])) ?></small>
+                                        <?php if ($isJustCreated): ?>
+                                            <span class="badge bg-warning text-dark ms-1">Just Created</span>
+                                        <?php endif; ?>
+                                        <small class="text-muted ms-2"><?= date('M d, Y h:i A', strtotime($task['created_at'])) ?></small>
                                     </div>
                                     <?php if ($displayStatus !== 'Completed' && !$disableSubmit): ?>
                                         <button class="btn btn-sm btn-outline-success" onclick="submitToAccomplishment(<?= $task['stask_id'] ?>, '<?= htmlspecialchars($task['title'], ENT_QUOTES) ?>')">
@@ -1842,6 +1762,7 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST" id="verbalTaskForm">
+                <input type="hidden" name="create_verbal_task" value="1">
                 <input type="hidden" name="task_form_token" value="<?= htmlspecialchars($student_task_form_token) ?>">
                 <div class="modal-body">
                     <div class="alert alert-info">
@@ -2078,13 +1999,28 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
     }
 
     /* ===== ATTENDANCE LOGIC ===== */
+    const initialViewName = <?= json_encode($initial_view) ?>;
+    const newlyCreatedTaskId = <?= json_encode($newly_created_task_id) ?>;
     document.addEventListener('DOMContentLoaded', () => {
-        try {
-            const last = localStorage.getItem('rserve_last_view');
-            if (last && document.getElementById('view-' + last)) {
-                showView(last, null);
-            }
-        } catch (e) {}
+        if (initialViewName && document.getElementById('view-' + initialViewName)) {
+            showView(initialViewName, null);
+        } else {
+            try {
+                const last = localStorage.getItem('rserve_last_view');
+                if (last && document.getElementById('view-' + last)) {
+                    showView(last, null);
+                }
+            } catch (e) {}
+        }
+
+        if (newlyCreatedTaskId) {
+            window.requestAnimationFrame(() => {
+                const createdTaskRow = document.querySelector(`[data-task-row-id="${newlyCreatedTaskId}"]`);
+                if (createdTaskRow) {
+                    createdTaskRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            });
+        }
     });
     const sessionSelect = document.getElementById('sessionSelect');
     const timeIn = document.getElementById('timeIn');
@@ -2308,7 +2244,7 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
     });
 
     function submitToAccomplishment(staskId, title) {
-        const taskItem = document.querySelector(`[data-stask-id="${staskId}"]`);
+        const taskItem = document.querySelector(`textarea[data-stask-id="${staskId}"]`);
         const description = taskItem ? taskItem.value : '';
         if (!description || description.trim() === '') {
             alert('Please add a description first.');

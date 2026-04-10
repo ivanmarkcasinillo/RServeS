@@ -22,7 +22,7 @@ $check_enrollment->close();
 
 if (!$enrollment) {
     $_SESSION['flash_error'] = "Please complete the enrollment form first.";
-    header("Location: rss_enrollment_form.php");
+    header("Location: ../enrolment.php");
     exit;
 }
 
@@ -34,6 +34,12 @@ $check_agreement->bind_param("i", $student_id);
 $check_agreement->execute();
 $existing_agreement = $check_agreement->get_result()->fetch_assoc();
 $check_agreement->close();
+
+if ($existing_agreement) {
+    $_SESSION['flash'] = "You have already submitted an agreement form.";
+    header("Location: ../pending_requirements.php");
+    exit;
+}
 
 if ($existing_agreement) {
     $_SESSION['flash'] = "You have already submitted an agreement form.";
@@ -68,6 +74,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // 🔒 Safety check: prevent duplicate agreement
     if ($existing_agreement) {
         $_SESSION['flash_error'] = "Agreement already submitted.";
+        header("Location: ../pending_requirements.php");
+        exit;
 
         // Go back to student dashboard
         $departments = [
@@ -156,6 +164,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $prog->close();
 
         $_SESSION['flash'] = "Agreement form submitted successfully!";
+        header("Location: ../pending_requirements.php");
+        exit;
 
         // Redirect based on department
       function redirectStudentDashboard($deptId) {

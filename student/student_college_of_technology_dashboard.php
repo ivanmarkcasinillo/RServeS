@@ -13,11 +13,27 @@ date_default_timezone_set('Asia/Manila');
 session_start();
 require "dbconnect.php";
 include "check_expiration.php";
+require_once __DIR__ . "/task_backend.php";
+rserves_student_ensure_task_schema($conn);
 
 if (empty($_SESSION['student_task_form_token'])) {
     $_SESSION['student_task_form_token'] = bin2hex(random_bytes(16));
 }
 $student_task_form_token = $_SESSION['student_task_form_token'];
+
+if (!function_exists('rserves_dashboard_view_url')) {
+    function rserves_dashboard_view_url(string $view = 'dashboard'): string
+    {
+        $self = $_SERVER['PHP_SELF'] ?? 'student_college_of_technology_dashboard.php';
+        $allowed_views = ['dashboard', 'tasks', 'documents', 'notifications'];
+
+        if (!in_array($view, $allowed_views, true) || $view === 'dashboard') {
+            return $self;
+        }
+
+        return $self . '?view=' . urlencode($view);
+    }
+}
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Student') {
     header("Location: ../home2.php");
@@ -183,7 +199,7 @@ if (!in_array($_SESSION['role'], ['Coordinator', 'Instructor'])) {
                 $attempt_stmt->close();
                 if ($attempt_cnt >= 2) {
                     $_SESSION['flash'] = "You can only submit this task to your adviser twice.";
-                    header("Location: " . $_SERVER['PHP_SELF']);
+                    header("Location: " . rserves_dashboard_view_url('tasks'));
                     exit;
                 }
             }
@@ -271,7 +287,7 @@ if (!in_array($_SESSION['role'], ['Coordinator', 'Instructor'])) {
             }
             */
             $_SESSION['flash'] = "Accomplishment submitted to adviser for approval!";
-            header("Location: " . $_SERVER['PHP_SELF']);
+            header("Location: " . rserves_dashboard_view_url('tasks'));
             exit;
         }
         $stmt->close();
@@ -539,94 +555,10 @@ if (isset($_POST['submit_time'])) {
     exit;
 }
 
-if (isset($_POST['create_verbal_task'])) {
-    $form_token = trim((string)($_POST['task_form_token'] ?? ''));
-    $session_token = (string)($_SESSION['student_task_form_token'] ?? '');
-    if ($form_token === '' || $session_token === '' || !hash_equals($session_token, $form_token)) {
-        error_log("Student task token mismatch for student {$student_id} on " . ($_SERVER['HTTP_HOST'] ?? 'unknown-host'));
-    }
-    $_SESSION['student_task_form_token'] = bin2hex(random_bytes(16));
-    $student_task_form_token = $_SESSION['student_task_form_token'];
-
-    $task_title = trim($_POST['task_title']);
-    $task_desc = trim($_POST['task_description']);
-    $duration = trim((string)($_POST['duration'] ?? ''));
-    $allowed_durations = ['Within a Day', 'Within a Week', 'Within a Month'];
-
-    $assigner_input = isset($_POST['assigner_id']) ? intval($_POST['assigner_id']) : 0;
-    $assigner_id = 0;
-    if ($assigner_input > 0) {
-        $assigner_check = $conn->prepare("SELECT inst_id FROM instructors WHERE inst_id = ? AND department_id = ? LIMIT 1");
-        if ($assigner_check) {
-            $assigner_check->bind_param("ii", $assigner_input, $student['department_id']);
-            $assigner_check->execute();
-            $assigner_result = $assigner_check->get_result();
-            if ($assigner_result && $assigner_result->fetch_assoc()) {
-                $assigner_id = $assigner_input;
-            }
-            $assigner_check->close();
-        }
-    }
-
-    if ($assigner_id === 0 && !empty($student['instructor_id'])) {
-        $assigner_id = intval($student['instructor_id']);
-    }
-
-    if (empty($task_title)) {
-        $_SESSION['flash'] = "Please select a task category before creating a task.";
-        header("Location: ".$_SERVER['PHP_SELF']);
-        exit;
-    }
-
-    if (!in_array($duration, $allowed_durations, true)) {
-        $_SESSION['flash'] = "Please select a valid duration.";
-        header("Location: ".$_SERVER['PHP_SELF']);
-        exit;
-    }
-
-    if (!empty($task_title)) {
-        $conn->begin_transaction();
-
-        try {
-            $stmt = $conn->prepare("INSERT INTO tasks (title, description, duration, instructor_id, department_id, created_by_student, created_at) VALUES (?, ?, ?, NULLIF(?, 0), ?, ?, NOW())");
-            if (!$stmt) {
-                throw new RuntimeException($conn->error);
-            }
-
-            $stmt->bind_param("sssiii", $task_title, $task_desc, $duration, $assigner_id, $student['department_id'], $student_id);
-            if (!$stmt->execute()) {
-                $stmt_error = $stmt->error;
-                $stmt->close();
-                throw new RuntimeException($stmt_error);
-            }
-
-            $new_task_id = $stmt->insert_id;
-            $stmt->close();
-
-            $stmt2 = $conn->prepare("INSERT INTO student_tasks (task_id, student_id, status, assigned_at) VALUES (?, ?, 'Pending', NOW())");
-            if (!$stmt2) {
-                throw new RuntimeException($conn->error);
-            }
-
-            $stmt2->bind_param("ii", $new_task_id, $student_id);
-            if (!$stmt2->execute()) {
-                $stmt2_error = $stmt2->error;
-                $stmt2->close();
-                throw new RuntimeException($stmt2_error);
-            }
-
-            $stmt2->close();
-            $conn->commit();
-            $_SESSION['flash'] = "Verbal task '{$task_title}' created successfully!";
-        } catch (Throwable $e) {
-            $conn->rollback();
-            error_log("Verbal task creation failed for student {$student_id}: " . $e->getMessage());
-            $_SESSION['flash'] = "Task creation failed. Please try again.";
-        }
-
-        header("Location: ".$_SERVER['PHP_SELF']);
-        exit;
-    }
+if (isset($_POST['create_verbal_task']) || isset($_POST['task_form_token'])) {
+    $_SESSION['flash'] = rserves_create_student_verbal_task($conn, $student, $student_id, $_POST, true);
+    header("Location: " . rserves_dashboard_view_url('tasks'));
+    exit;
 }
 
 if (isset($_POST['update_task_duration'])) {
@@ -667,60 +599,7 @@ if (isset($_POST['update_task_desc'])) {
 
 /* Organization Task Creation Removed */
 
-$tasks = [];
-$query = "
-    SELECT 
-        st.stask_id, st.status, st.assigned_at, 
-        t.task_id, t.title, t.description, t.duration, t.created_by_student, t.created_at, t.instructor_id,
-        i.firstname as inst_fname, i.lastname as inst_lname,
-        CASE 
-            WHEN t.created_by_student = ? THEN 'verbal'
-            ELSE 'adviser'
-        END as task_type
-    FROM student_tasks st
-    INNER JOIN tasks t ON st.task_id = t.task_id
-    LEFT JOIN instructors i ON t.instructor_id = i.inst_id
-    WHERE st.student_id = ? AND st.status = 'Pending'
-    ORDER BY t.created_at DESC
-";
-
-$stmt = $conn->prepare($query);
-$stmt->bind_param("ii", $student_id, $student_id);
-$stmt->execute();
-$result = $stmt->get_result();
-while ($row = $result->fetch_assoc()) {
-    $tasks[] = $row;
-}
-$stmt->close();
-
-$deduped_tasks = [];
-$seen_task_signatures = [];
-foreach ($tasks as $task) {
-    $task_signature = implode('|', [
-        $task['title'] ?? '',
-        $task['description'] ?? '',
-        $task['duration'] ?? '',
-        $task['created_by_student'] ?? '',
-        $task['instructor_id'] ?? '',
-        $task['task_type'] ?? '',
-        $task['created_at'] ?? ''
-    ]);
-
-    if (isset($seen_task_signatures[$task_signature])) {
-        continue;
-    }
-
-    $seen_task_signatures[$task_signature] = true;
-    $deduped_tasks[] = $task;
-}
-$tasks = $deduped_tasks;
-
-// Hide tasks once the student has already complied, even if the submission is still pending approval
-$pending_tasks = [];
-foreach ($tasks as $task) {
-    $pending_tasks[] = $task;
-}
-$tasks = $deduped_tasks;
+$tasks = rserves_fetch_student_dashboard_tasks($conn, $student_id, $accomplishment_reports);
 
 /* Org Tasks Fetching Removed */
 // Org init removed
@@ -763,7 +642,7 @@ foreach ($tasks as $task) {
         'type' => 'task',
         'message' => 'New Task: ' . $task['title'],
         'date' => $task['created_at'],
-        'link' => "markAsRead('task', {$task['task_id']}, function() { showView('tasks', document.querySelector('#sidebar-wrapper .list-group-item:nth-child(2)')); })",
+        'link' => "markAsRead('task', {$task['task_id']}, function() { showView('tasks'); })",
         'is_read' => $is_read
     ];
 }
@@ -786,6 +665,15 @@ usort($notifications, function($a, $b) {
 });
 
 $unread_count = count(array_filter($notifications, function($n) { return !$n['is_read']; }));
+
+$newly_created_task_id = intval($_SESSION['last_created_student_task_id'] ?? 0);
+unset($_SESSION['last_created_student_task_id']);
+
+$allowed_dashboard_views = ['dashboard', 'tasks', 'documents', 'notifications'];
+$initial_view = 'dashboard';
+if (isset($_GET['view']) && in_array($_GET['view'], $allowed_dashboard_views, true)) {
+    $initial_view = $_GET['view'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1096,6 +984,17 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
         .task-item:hover {
             background: white;
             box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+
+        .task-item.task-item-new {
+            background: linear-gradient(135deg, rgba(255, 248, 214, 0.95), rgba(255, 255, 255, 0.96));
+            border-color: rgba(255, 193, 7, 0.7);
+            box-shadow: 0 10px 24px rgba(255, 193, 7, 0.16);
+        }
+
+        .task-item.task-item-new:hover {
+            background: linear-gradient(135deg, rgba(255, 250, 228, 1), rgba(255, 255, 255, 1));
+            box-shadow: 0 14px 28px rgba(255, 193, 7, 0.2);
         }
         
         .btn-custom {
@@ -1480,11 +1379,11 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
         </div>
     </div>
     <div class="mobile-header-nav">
-        <a href="#" class="nav-item active" onclick="showView('dashboard', this)">
+        <a href="#" class="nav-item active" data-view-link="dashboard" onclick="showView('dashboard', this); return false;">
             <i class="fas fa-th-large"></i>
             <span>Dashboard</span>
         </a>
-        <a href="#" class="nav-item position-relative" onclick="showView('tasks', this)">
+        <a href="#" class="nav-item position-relative" data-view-link="tasks" onclick="showView('tasks', this); return false;">
             <i class="fas fa-tasks"></i>
             <span>Tasks</span>
             <?php if(count($tasks) > 0): ?>
@@ -1492,7 +1391,7 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
             <?php endif; ?>
         </a>
         <!-- Org Mobile Nav Removed -->
-        <a href="#" class="nav-item" onclick="showView('documents', this)">
+        <a href="#" class="nav-item" data-view-link="documents" onclick="showView('documents', this); return false;">
             <i class="fas fa-file-alt"></i>
             <span>Docs</span>
         </a>
@@ -1539,7 +1438,7 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
                             </a>
                         </li>
                     <?php endforeach; ?>
-                    <li><a class="dropdown-item text-center small text-primary fw-bold py-2" href="#" onclick="showView('notifications', null)">View All Notifications</a></li>
+                    <li><a class="dropdown-item text-center small text-primary fw-bold py-2" href="#" onclick="showView('notifications'); return false;">View All Notifications</a></li>
                 <?php endif; ?>
             </ul>
         </div>
@@ -1558,20 +1457,20 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
             <i class="fas"></i> <img src="../img/logo.png" alt="RServeS Logo" style="width: 40px; height: auto;"> RServeS
         </div>
         <div class="list-group list-group-flush">
-            <a href="#" class="list-group-item list-group-item-action active" onclick="showView('dashboard', this)">
+            <a href="#" class="list-group-item list-group-item-action active" data-view-link="dashboard" onclick="showView('dashboard', this); return false;">
                 <i class="fas fa-th-large"></i> Dashboard
             </a>
-            <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" onclick="showView('tasks', this)">
+            <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" data-view-link="tasks" onclick="showView('tasks', this); return false;">
                 <span><i class="fas fa-tasks"></i> Tasks</span>
                 <?php if(count($tasks) > 0): ?>
                     <span class="badge bg-danger rounded-pill"><?= count($tasks) ?></span>
                 <?php endif; ?>
             </a>
             <!-- Org Sidebar Link Removed -->
-            <a href="#" class="list-group-item list-group-item-action" onclick="showView('documents', this)">
+            <a href="#" class="list-group-item list-group-item-action" data-view-link="documents" onclick="showView('documents', this); return false;">
                 <i class="fas fa-file-alt"></i> Documents
             </a>
-            <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" onclick="showView('notifications', this)">
+            <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" data-view-link="notifications" onclick="showView('notifications', this); return false;">
                 <span><i class="fas fa-bell"></i> Notifications</span>
                 <?php if ($unread_count > 0): ?>
                     <span class="badge bg-danger rounded-pill"><?= $unread_count ?></span>
@@ -1604,8 +1503,14 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
             
             <!-- Flash Message -->
             <?php if (isset($_SESSION['flash'])): ?>
-                <div class="alert alert-success alert-dismissible fade show mb-4" role="alert">
-                    <i class="fas fa-check-circle me-2"></i><?= htmlspecialchars($_SESSION['flash']) ?>
+                <?php
+                    $flash_message = (string) $_SESSION['flash'];
+                    $flash_is_error = stripos($flash_message, 'failed') !== false
+                        || stripos($flash_message, 'expired') !== false
+                        || stripos($flash_message, 'please ') === 0;
+                ?>
+                <div class="alert alert-<?= $flash_is_error ? 'danger' : 'success' ?> alert-dismissible fade show mb-4" role="alert">
+                    <i class="fas <?= $flash_is_error ? 'fa-exclamation-circle' : 'fa-check-circle' ?> me-2"></i><?= htmlspecialchars($flash_message) ?>
                     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
                 <?php unset($_SESSION['flash']); ?>
@@ -1828,40 +1733,13 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
                     <?php else: ?>
                         <?php foreach ($tasks as $task): ?>
                             <?php 
-                            $isVerbal = ($task['task_type'] === 'verbal');
-                            
-                            // Check for matching accomplishment report
-                            $arStatus = null;
-                            $arAttempts = 0;
-                            foreach ($accomplishment_reports as $ar) {
-                                if (
-                                    (isset($ar['student_task_id']) && intval($ar['student_task_id']) === intval($task['stask_id']))
-                                    || strpos($ar['activity'], '[TaskID:' . $task['stask_id'] . ']') !== false
-                                ) {
-                                    $arAttempts++;
-                                    if ($arStatus === null) {
-                                        $arStatus = $ar['status'];
-                                    }
-                                }
-                            }
-                            
-                            $displayStatus = $task['status'];
-                            $disableSubmit = false;
-                            
-                            if ($arStatus === 'Pending') {
-                                $displayStatus = 'Pending Approval';
-                                $disableSubmit = true;
-                            } elseif ($arStatus === 'Verified' || $arStatus === 'Approved') {
-                                 $displayStatus = 'Completed';
-                                 $disableSubmit = true;
-                            } elseif ($arStatus === 'Rejected') {
-                                $displayStatus = 'Rejected';
-                            }
-                            if ($arAttempts >= 2 && $displayStatus !== 'Completed') {
-                                $disableSubmit = true;
-                            }
+                            $isVerbal = !empty($task['is_verbal']);
+                            $arAttempts = intval($task['ar_attempts'] ?? 0);
+                            $displayStatus = (string)($task['display_status'] ?? ($task['status'] ?? 'Pending'));
+                            $disableSubmit = !empty($task['disable_submit']);
+                            $isJustCreated = ($newly_created_task_id > 0 && intval($task['stask_id']) === $newly_created_task_id);
                             ?>
-                            <div class="task-item">
+                            <div class="task-item<?= $isJustCreated ? ' task-item-new' : '' ?>" data-task-row-id="<?= $task['stask_id'] ?>">
                                 <div class="d-flex justify-content-between align-items-start mb-2">
                                     <div>
                                         <h5 class="fw-bold mb-1"><?= htmlspecialchars($task['title']) ?></h5>
@@ -1897,12 +1775,15 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
                                         <?php elseif($displayStatus == 'Completed'): ?>
                                              <span class="badge bg-success ms-1">Completed</span>
                                         <?php else: ?>
-                                            <span class="badge bg-warning text-dark ms-1"><?= htmlspecialchars($task['status']) ?></span>
+                                            <span class="badge bg-warning text-dark ms-1"><?= htmlspecialchars($displayStatus) ?></span>
                                         <?php endif; ?>
                                         <?php if ($arAttempts > 0): ?>
                                             <span class="badge bg-secondary ms-1"><?= intval($arAttempts) ?>/2</span>
                                         <?php endif; ?>
-                                        <small class="text-muted ms-2"><?= date('M d, Y', strtotime($task['created_at'])) ?></small>
+                                        <?php if ($isJustCreated): ?>
+                                            <span class="badge bg-warning text-dark ms-1">Just Created</span>
+                                        <?php endif; ?>
+                                        <small class="text-muted ms-2"><?= date('M d, Y h:i A', strtotime($task['created_at'])) ?></small>
                                     </div>
                                     <?php if ($displayStatus !== 'Completed' && !$disableSubmit): ?>
                                         <button class="btn btn-sm btn-outline-success" onclick="submitToAccomplishment(<?= $task['stask_id'] ?>, '<?= htmlspecialchars($task['title'], ENT_QUOTES) ?>')">
@@ -2011,6 +1892,7 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST" id="verbalTaskForm">
+                <input type="hidden" name="create_verbal_task" value="1">
                 <input type="hidden" name="task_form_token" value="<?= htmlspecialchars($student_task_form_token) ?>">
                 <div class="modal-body">
                     <div class="alert alert-info">
@@ -2139,11 +2021,9 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
 
     // View Management
     function showView(viewName, linkElement) {
-        // Update Sidebar Active State
-        if(linkElement) {
-            document.querySelectorAll('.list-group-item, .mobile-header-nav .nav-item').forEach(el => el.classList.remove('active'));
-            linkElement.classList.add('active');
-        }
+        document.querySelectorAll('[data-view-link]').forEach(el => {
+            el.classList.toggle('active', el.dataset.viewLink === viewName);
+        });
 
         // Hide all views
         document.getElementById('view-dashboard').classList.add('d-none');
@@ -2153,9 +2033,44 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
 
         // Show target view
         const targetView = document.getElementById('view-' + viewName);
+        if (!targetView) {
+            return false;
+        }
+
         targetView.classList.remove('d-none');
         animateView(targetView);
+
+        if (window.history && window.history.replaceState) {
+            const currentUrl = new URL(window.location.href);
+            if (viewName === 'dashboard') {
+                currentUrl.searchParams.delete('view');
+            } else {
+                currentUrl.searchParams.set('view', viewName);
+            }
+            window.history.replaceState({}, '', currentUrl.toString());
+        }
+
+        return false;
     }
+
+    const initialViewName = <?= json_encode($initial_view) ?>;
+    const newlyCreatedTaskId = <?= json_encode($newly_created_task_id) ?>;
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!initialViewName || initialViewName === 'dashboard') {
+            return;
+        }
+
+        showView(initialViewName, document.querySelector(`[data-view-link="${initialViewName}"]`));
+
+        if (newlyCreatedTaskId) {
+            window.requestAnimationFrame(() => {
+                const createdTaskRow = document.querySelector(`[data-task-row-id="${newlyCreatedTaskId}"]`);
+                if (createdTaskRow) {
+                    createdTaskRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            });
+        }
+    });
 
     /* ===== ATTENDANCE LOGIC ===== */
     const sessionSelect = document.getElementById('sessionSelect');
@@ -2373,7 +2288,7 @@ $unread_count = count(array_filter($notifications, function($n) { return !$n['is
     });
 
     function submitToAccomplishment(staskId, title) {
-        const taskItem = document.querySelector(`[data-stask-id="${staskId}"]`);
+        const taskItem = document.querySelector(`textarea[data-stask-id="${staskId}"]`);
         const description = taskItem ? taskItem.value : '';
         if (!description || description.trim() === '') {
             alert('Please add a description first.');

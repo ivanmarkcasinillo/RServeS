@@ -491,7 +491,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $_SESSION['enrollment_id'] = $enrollment_id;
             $_SESSION['flash'] = "✅ Enrollment submitted! Waiting for Adviser Approval.";
-            header("Location: aggreementform.php");
+            header("Location: pending_requirements.php");
             exit;
         } else {
             $error = "❌ Database Error: " . $stmt->error;

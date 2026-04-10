@@ -12,7 +12,7 @@ if (file_exists(__DIR__ . '/config.php')) {
     define('DB_PASS', 'RServeS_Live2026!');
     define('DB_NAME', 'u656702496_rss_db');
     define('DB_PORT', '3306');
-    define('BASE_URL', 'http://localhost/RServeSv23/');
+    define('BASE_URL', 'http://localhost/' . basename(__DIR__) . '/');
 }
 
 $conn = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME, DB_PORT);

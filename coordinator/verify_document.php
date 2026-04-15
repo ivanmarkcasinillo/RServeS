@@ -1,6 +1,7 @@
 <?php
 session_start();
 require "dbconnect.php";
+require_once __DIR__ . "/../send_email.php";
 
 header('Content-Type: application/json');
 
@@ -62,6 +63,29 @@ if ($stmt) {
 }
 
 if ($stmt->execute()) {
+    $student = rserves_fetch_student_email_recipient($conn, $stud_id);
+    if ($student) {
+        $doc_labels = [
+            'waiver' => 'waiver',
+            'agreement' => 'agreement',
+            'enrollment' => 'enrollment form',
+        ];
+        $doc_label = $doc_labels[$doc_type] ?? $doc_type;
+        $body = rserves_notification_build_body(
+            rserves_notification_recipient_name($student),
+            "Your {$doc_label} was {$status}.",
+            [
+                'Document' => ucfirst($doc_label),
+                'Status' => $status,
+            ]
+        );
+        rserves_send_bulk_notification_email(
+            [$student],
+            ucfirst($doc_label) . " {$status}",
+            $body
+        );
+    }
+
     echo json_encode(['success' => true]);
 } else {
     echo json_encode(['success' => false, 'message' => 'Database error: ' . $conn->error]);

@@ -1,6 +1,7 @@
 <?php
 session_start();
 require "dbconnect.php";
+require_once __DIR__ . "/../send_email.php";
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Instructor') {
     header("Location: ../home2.php");
@@ -58,6 +59,20 @@ if (isset($_POST['approve_request'])) {
         $prog->bind_param("i", $student_id);
         $prog->execute();
         $prog->close();
+
+        $student = rserves_fetch_student_email_recipient($conn, $student_id);
+        if ($student) {
+            $body = rserves_notification_build_body(
+                rserves_notification_recipient_name($student),
+                "Your enrollment request was approved.",
+                [
+                    'Section' => (string) $section,
+                    'Year Level' => (string) $year_level,
+                    'Status' => 'Approved',
+                ]
+            );
+            rserves_send_bulk_notification_email([$student], 'Enrollment Approved', $body);
+        }
         
         $msg = "Student enrollment approved successfully!";
     } else {
@@ -91,6 +106,19 @@ if (isset($_POST['decline_request'])) {
         $up_rss->bind_param("i", $student_id);
         $up_rss->execute();
         $up_rss->close();
+
+        $student = rserves_fetch_student_email_recipient($conn, $student_id);
+        if ($student) {
+            $body = rserves_notification_build_body(
+                rserves_notification_recipient_name($student),
+                "Your enrollment request was rejected.",
+                [
+                    'Status' => 'Rejected',
+                    'Reason' => $reason,
+                ]
+            );
+            rserves_send_bulk_notification_email([$student], 'Enrollment Rejected', $body);
+        }
         
         $msg = "Request declined.";
     } else {
@@ -110,6 +138,18 @@ if (isset($_POST['end_session'])) {
     $up->execute();
     
     if ($up->affected_rows > 0) {
+         $student = rserves_fetch_student_email_recipient($conn, $student_id);
+         if ($student) {
+             $body = rserves_notification_build_body(
+                 rserves_notification_recipient_name($student),
+                 "Your RSS session was archived by your adviser.",
+                 [
+                     'Status' => 'Completed',
+                 ]
+             );
+             rserves_send_bulk_notification_email([$student], 'RSS Session Archived', $body);
+         }
+
          $msg = "Student session ended and archived.";
     } else {
          $msg = "Could not end session (Student might not be approved or not in your advisory class).";

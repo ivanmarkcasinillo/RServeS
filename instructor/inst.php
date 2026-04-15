@@ -2,6 +2,7 @@
 //instructor
 session_start();
 require "dbconnect.php";
+require_once __DIR__ . '/task_assignment_helper.php';
 
 /* -------------------  SESSION CHECK ------------------- */
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Instructor' || $_SESSION['department_id'] != 2) {
@@ -37,6 +38,12 @@ $fullname = $instructor['firstname']
 $photo = !empty($instructor['photo'])
        ? 'uploads/' . basename($instructor['photo'])
        : 'default_profile.jpg';
+
+try {
+    rserves_instructor_sync_task_assignments_for_instructor($conn, $inst_id);
+} catch (Throwable $e) {
+    error_log("Instructor task assignment sync failed for instructor {$inst_id}: " . $e->getMessage());
+}
 
 /* -------------------  HANDLE PHOTO UPLOAD ------------------- */
 if (!empty($_FILES['profilePhoto']['tmp_name'])) {
@@ -296,7 +303,8 @@ $mt_stmt = $conn->prepare("
         (SELECT COUNT(*) FROM student_tasks st WHERE st.task_id = t.task_id) as assigned_count,
         (SELECT COUNT(DISTINCT st.student_id) 
          FROM student_tasks st 
-         JOIN accomplishment_reports ar ON ar.student_id = st.student_id AND ar.activity LIKE CONCAT('%[TaskID:', st.task_id, ']%') 
+         JOIN accomplishment_reports ar ON ar.student_id = st.student_id 
+            AND (ar.student_task_id = st.stask_id OR ar.activity LIKE CONCAT('%[TaskID:', st.stask_id, ']%')) 
          WHERE st.task_id = t.task_id 
          AND ar.status IN ('Verified', 'Approved')) as completed_count
     FROM tasks t 

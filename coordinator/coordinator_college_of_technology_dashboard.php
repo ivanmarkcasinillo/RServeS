@@ -734,8 +734,9 @@ $result->free();
             }
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/rserve-dashboard-theme.css">
 </head>
-<body>
+<body class="rserve-theme">
 
     <div id="rserve-page-loader" class="rserve-page-loader" aria-hidden="true">
         <div class="rserve-page-loader__inner">
@@ -759,11 +760,11 @@ $result->free();
             </div>
         </div>
         <div class="mobile-header-nav">
-            <a href="#" class="nav-item active" onclick="showView('dashboard', this)">
+            <a href="#" class="nav-item active" data-view-link="dashboard" onclick="showView('dashboard', this); return false;">
                 <i class="fas fa-th-large"></i>
-                <span>Dashboard</span>
+                <span>Overview</span>
             </a>
-            <a href="#" class="nav-item position-relative" onclick="showView('records', this)">
+            <a href="#" class="nav-item position-relative" data-view-link="records" onclick="showView('records', this); return false;">
                 <i class="fas fa-users"></i>
                 <span>Records</span>
                 <?php if($pending_verifications > 0): ?>
@@ -772,11 +773,11 @@ $result->free();
                     </span>
                 <?php endif; ?>
             </a>
-            <a href="#" class="nav-item" onclick="showView('reports', this)">
+            <a href="#" class="nav-item" data-view-link="reports" onclick="showView('reports', this); return false;">
                 <i class="fas fa-chart-bar"></i>
                 <span>Reports</span>
             </a>
-            <a href="#" class="nav-item position-relative" onclick="showView('notifications', this)">
+            <a href="#" class="nav-item position-relative" data-view-link="notifications" onclick="showView('notifications', this); return false;">
                 <i class="fas fa-bell"></i>
                 <span>Notifs</span>
                 <?php if ($unread_notifs > 0): ?>
@@ -795,45 +796,69 @@ $result->free();
 <div class="d-flex" id="wrapper">
     <!-- Sidebar -->
     <div id="sidebar-wrapper">
-        <div class="sidebar-heading">
-            <img src="../img/logo.png" alt="Logo" class="me-2" style="height: 30px;"> RServeS
-        </div>
-        <div class="list-group list-group-flush">
-            <a href="#" class="list-group-item list-group-item-action active" onclick="showView('dashboard', this)">
-                <i class="fas fa-th-large"></i> Dashboard
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" onclick="showView('records', this)">
-                <i class="fas fa-users"></i> Student Records
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" onclick="showView('reports', this)">
-                <i class="fas fa-chart-bar"></i> Reports
-            </a>
-            <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" onclick="showView('notifications', this)">
-                <span><i class="fas fa-bell"></i> Notifications</span>
-                <?php if ($unread_notifs > 0): ?>
-                    <span class="badge bg-danger rounded-pill"><?php echo $unread_notifs; ?></span>
-                <?php endif; ?>
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" data-bs-toggle="modal" data-bs-target="#profileModal">
-                <i class="fas fa-user-circle"></i> Profile
-            </a>
-            <a href="logout.php" class="list-group-item list-group-item-action mt-auto">
-                <i class="fas fa-sign-out-alt"></i> Logout
-            </a>
+        <div class="sidebar-shell">
+            <div class="sidebar-heading">
+                <span class="sidebar-brand-title">RServeS Portal</span>
+                <span class="sidebar-brand-subtitle">Coordinator Workspace</span>
+            </div>
+            <div class="list-group list-group-flush">
+                <a href="#" class="list-group-item list-group-item-action active" data-view-link="dashboard" onclick="showView('dashboard', this); return false;">
+                    <i class="fas fa-th-large"></i> Dashboard
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-view-link="records" onclick="showView('records', this); return false;">
+                    <i class="fas fa-users"></i> Student Records
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-view-link="reports" onclick="showView('reports', this); return false;">
+                    <i class="fas fa-chart-bar"></i> Reports
+                </a>
+                <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" data-view-link="notifications" onclick="showView('notifications', this); return false;">
+                    <span><i class="fas fa-bell"></i> Notifications</span>
+                    <?php if ($unread_notifs > 0): ?>
+                        <span class="badge bg-danger rounded-pill"><?php echo $unread_notifs; ?></span>
+                    <?php endif; ?>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-bs-toggle="modal" data-bs-target="#profileModal">
+                    <i class="fas fa-user-circle"></i> Profile
+                </a>
+                <a href="logout.php" class="list-group-item list-group-item-action">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </div>
+            <div class="role-sidebar-card">
+                <div class="sidebar-role-profile">
+                    <img src="<?php echo htmlspecialchars($coord_photo); ?>" alt="Profile" class="sidebar-role-avatar">
+                    <div>
+                        <div class="sidebar-role-name"><?php echo htmlspecialchars($coord_name); ?></div>
+                        <div class="sidebar-role-meta">Coordinator | College of Technology</div>
+                    </div>
+                </div>
+                <button type="button" class="sidebar-support-btn" data-bs-toggle="modal" data-bs-target="#profileModal">
+                    Profile Center
+                </button>
+            </div>
         </div>
     </div>
 
     <!-- Page Content -->
     <div id="page-content-wrapper">
-        <nav class="navbar navbar-expand-lg navbar-dark">
-
-            
-            <div class="ms-auto d-flex align-items-center">
-                <div class="me-3 text-end d-none d-md-block">
-                    <div class="fw-bold"><?php echo htmlspecialchars($coord_name); ?></div>
-                    <small class="text-white-50">Coordinator</small>
+        <nav class="navbar navbar-expand-lg">
+            <div class="topbar-shell">
+                <div class="topbar-tabs d-none d-lg-flex">
+                    <a href="#" class="topbar-tab active" data-view-link="dashboard" onclick="showView('dashboard'); return false;">Overview</a>
+                    <a href="#" class="topbar-tab" data-view-link="records" onclick="showView('records'); return false;">Records</a>
+                    <a href="#" class="topbar-tab" data-view-link="reports" onclick="showView('reports'); return false;">Reports</a>
+                    <a href="#" class="topbar-tab" data-view-link="notifications" onclick="showView('notifications'); return false;">Notifications</a>
                 </div>
-                <img src="<?php echo htmlspecialchars($coord_photo); ?>" alt="Profile" class="profile-img-nav" data-bs-toggle="modal" data-bs-target="#profileModal" style="cursor: pointer;">
+
+                <div class="topbar-actions">
+                    <div class="topbar-profile" data-bs-toggle="modal" data-bs-target="#profileModal">
+                        <div class="topbar-identity">
+                            <div><?php echo htmlspecialchars($coord_name); ?></div>
+                            <div>Coordinator | College of Technology</div>
+                        </div>
+                        <img src="<?php echo htmlspecialchars($coord_photo); ?>" alt="Profile" class="topbar-avatar">
+                    </div>
+                </div>
             </div>
         </nav>
 
@@ -942,11 +967,14 @@ function togglePasswordVisibility(icon, fieldId) {
 
 
     // View Management
-    function showView(view, el) {
-        if(el) {
-            document.querySelectorAll('.list-group-item, .mobile-header-nav .nav-item').forEach(item => item.classList.remove('active'));
-            el.classList.add('active');
-        }
+    function setActiveViewLinks(view) {
+        document.querySelectorAll('[data-view-link]').forEach((item) => {
+            item.classList.toggle('active', item.getAttribute('data-view-link') === view);
+        });
+    }
+
+    function showView(view) {
+        setActiveViewLinks(view);
         
         const container = document.getElementById('main-content');
         container.innerHTML = '';
@@ -960,6 +988,60 @@ function togglePasswordVisibility(icon, fieldId) {
         } else if (view === 'notifications') {
             renderNotifications(container);
         }
+    }
+
+    function findViewTrigger(view) {
+        return document.querySelector(`[data-view-link="${view}"]`);
+    }
+
+    function findCoordinatorStudent(studentId) {
+        for (const year of Object.keys(studentsData || {})) {
+            const sections = studentsData[year] || {};
+
+            for (const section of Object.keys(sections)) {
+                const students = sections[section] || [];
+                const student = students.find((entry) => String(entry.stud_id) === String(studentId));
+
+                if (student) {
+                    return { year, section, student };
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function highlightNotificationTarget(selector) {
+        const target = document.querySelector(selector);
+        if (!target) return;
+
+        target.classList.add('border-primary', 'shadow-sm');
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        window.setTimeout(() => {
+            target.classList.remove('border-primary', 'shadow-sm');
+        }, 2200);
+    }
+
+    function openCoordinatorNotification(notificationId) {
+        const notification = (notifications || []).find((item) => String(item.id) === String(notificationId));
+        if (!notification) return;
+
+        showView('records', findViewTrigger('records'));
+
+        const match = findCoordinatorStudent(notification.student_id);
+        if (!match) return;
+
+        renderSections(match.year);
+        renderStudentList(match.year, match.section);
+
+        window.requestAnimationFrame(() => {
+            highlightNotificationTarget(`[data-student-id="${notification.student_id}"]`);
+
+            if (['waiver', 'agreement', 'enrollment'].includes(String(notification.type || '').toLowerCase())) {
+                openVerifyModal(notification.student_id, notification.type);
+            }
+        });
     }
 
     function renderNotifications(container) {
@@ -1031,17 +1113,20 @@ function togglePasswordVisibility(icon, fieldId) {
                 
                 groups[label].forEach(n => {
                     const bgClass = n.is_read == 0 ? 'bg-light' : '';
-                    const icon = n.type === 'waiver' ? 'fa-file-signature' : 'fa-file-contract';
+                    const icon = n.type === 'waiver'
+                        ? 'fa-file-signature'
+                        : (n.type === 'agreement' ? 'fa-file-contract' : 'fa-folder-open');
                     const date = new Date(n.created_at).toLocaleString();
                     html += `
-                        <div class="list-group-item ${bgClass} d-flex justify-content-between align-items-center">
+                        <button type="button" class="list-group-item list-group-item-action ${bgClass} d-flex justify-content-between align-items-center text-start" onclick="openCoordinatorNotification(${n.id})">
                             <div>
                                 <i class="fas ${icon} me-2 text-primary"></i>
                                 ${n.message}
                                 <br><small class="text-muted ms-4">${date}</small>
+                                <br><small class="text-primary fw-semibold ms-4">Open related record</small>
                             </div>
                             ${n.is_read == 0 ? '<span class="badge bg-primary rounded-pill">New</span>' : ''}
-                        </div>
+                        </button>
                     `;
                 });
                 
@@ -1103,7 +1188,7 @@ function togglePasswordVisibility(icon, fieldId) {
             
             <div class="content-card">
                 <h4 class="mb-3">Quick Actions</h4>
-                <button class="btn btn-primary" onclick="showView('records', document.querySelectorAll('.list-group-item')[1])">
+                <button class="btn btn-primary" onclick="showView('records', findViewTrigger('records'))">
                     <i class="fas fa-search me-2"></i> Review Student Documents
                 </button>
             </div>
@@ -1204,7 +1289,7 @@ function togglePasswordVisibility(icon, fieldId) {
             else if (s.overall_status === 'Verified') statusClass = 'bg-info text-dark';
 
             rows += `
-                <tr>
+                <tr data-student-id="${s.stud_id}">
                     <td><input type="checkbox" class="student-cb" data-id="${s.stud_id}"></td>
                     <td>
                         <div class="d-flex align-items-center">

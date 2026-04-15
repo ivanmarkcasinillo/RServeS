@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RServe - Community Extension Services Management System</title>
+    <title>RServeS - Community Extension Services Management System</title>
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet">
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     
@@ -357,133 +357,1192 @@
             }
         }
     </style>
+    <style>
+        :root {
+            --navy-950: #082746;
+            --navy-900: #0d355f;
+            --navy-800: #134b82;
+            --sky-300: #9bc7ff;
+            --surface: #ffffff;
+            --ink-900: #102442;
+            --ink-700: #44556f;
+            --ink-500: #6d7d93;
+            --border-soft: rgba(16, 36, 66, 0.09);
+            --shadow-soft: 0 20px 60px rgba(12, 39, 70, 0.08);
+            --shadow-card: 0 18px 50px rgba(10, 33, 60, 0.14);
+            --radius-xl: 32px;
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Manrope', sans-serif;
+            color: var(--ink-900);
+            background: linear-gradient(180deg, #eef3f8 0%, #f7f8fb 35%, #f3f5f9 100%);
+        }
+
+        .section-spacing {
+            padding: clamp(72px, 9vw, 112px) 0;
+        }
+
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            padding: 0.45rem 0.9rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+        }
+
+        .section-heading {
+            font-family: 'Sora', sans-serif;
+            font-weight: 700;
+            font-size: clamp(2rem, 4vw, 3.1rem);
+            line-height: 1.05;
+            letter-spacing: -0.04em;
+            margin: 0 0 1rem;
+        }
+
+        .section-copy {
+            color: var(--ink-700);
+            font-size: 1.02rem;
+            line-height: 1.75;
+            margin: 0;
+        }
+
+        .site-navbar {
+            position: sticky;
+            top: 0;
+            z-index: 1050;
+            padding: 0.8rem 0;
+            background: rgba(249, 250, 252, 0.88);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.45);
+            -webkit-backdrop-filter: blur(18px);
+            backdrop-filter: blur(18px);
+            transition: background-color 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+        }
+
+        .site-navbar.is-scrolled,
+        .site-navbar.mobile-active {
+            background: rgba(247, 248, 252, 0.96);
+            box-shadow: 0 14px 40px rgba(10, 33, 60, 0.08);
+            border-bottom-color: rgba(16, 36, 66, 0.08);
+        }
+
+        .navbar-brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.8rem;
+            margin-right: 1.25rem;
+        }
+
+        .brand-logo {
+            width: 42px;
+            height: 42px;
+            border-radius: 14px;
+            object-fit: contain;
+            background: linear-gradient(145deg, #0a325b 0%, #144d86 100%);
+            padding: 0.35rem;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 10px 22px rgba(4, 31, 58, 0.22);
+        }
+
+        .navbar-brand .brand-logo {
+            width: 42px;
+            height: 42px;
+        }
+
+        .brand-text {
+            font-family: 'Sora', sans-serif;
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: -0.04em;
+            color: var(--ink-900);
+        }
+
+        .navbar-brand .brand-text {
+            color: var(--ink-900);
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+
+        .navbar-nav {
+            gap: 0.15rem;
+        }
+
+        .navbar-nav .nav-link {
+            color: var(--ink-700);
+            font-weight: 600;
+            font-size: 0.95rem;
+            padding: 0.55rem 0.95rem;
+            border-radius: 999px;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+
+        .navbar-nav .nav-link:hover,
+        .navbar-nav .nav-link:focus-visible {
+            color: var(--navy-900);
+            background: rgba(19, 75, 130, 0.08);
+        }
+
+        .navbar-toggler {
+            border: 0;
+            padding: 0.4rem 0.55rem;
+            border-radius: 12px;
+            color: var(--ink-900);
+            background: rgba(19, 75, 130, 0.08);
+            box-shadow: none !important;
+        }
+
+        .navbar-cta {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.72rem 1.15rem;
+            border: 1px solid rgba(8, 39, 70, 0.1);
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-800) 100%);
+            color: white;
+            font-size: 0.92rem;
+            font-weight: 700;
+            box-shadow: 0 14px 26px rgba(13, 53, 95, 0.18);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .navbar-cta:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 18px 32px rgba(13, 53, 95, 0.22);
+        }
+
+        .hero-section {
+            position: relative;
+            display: block;
+            min-height: auto;
+            overflow: hidden;
+            padding: clamp(72px, 10vw, 116px) 0 92px;
+            color: white;
+            background: linear-gradient(135deg, rgba(4, 31, 58, 0.95) 0%, rgba(13, 53, 95, 0.86) 48%, rgba(18, 70, 121, 0.8) 100%);
+        }
+
+        .hero-section::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(5, 28, 53, 0.28) 0%, rgba(5, 28, 53, 0.62) 100%), url('uploads/index_background.png') center center / cover no-repeat;
+            opacity: 0.95;
+        }
+
+        .hero-section::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0, rgba(255, 255, 255, 0.035) 18px, rgba(255, 255, 255, 0) 18px, rgba(255, 255, 255, 0) 78px),
+                radial-gradient(circle at 16% 18%, rgba(122, 182, 255, 0.24), transparent 34%),
+                radial-gradient(circle at 84% 24%, rgba(122, 182, 255, 0.17), transparent 30%),
+                linear-gradient(180deg, rgba(9, 37, 64, 0.2) 0%, rgba(8, 39, 70, 0.52) 100%);
+        }
+
+        .hero-section .container {
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-layout {
+            align-items: center;
+            min-height: min(84vh, 880px);
+        }
+
+        .hero-copy {
+            max-width: 590px;
+        }
+
+        .hero-copy .eyebrow {
+            color: rgba(255, 255, 255, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+        }
+
+        .hero-title {
+            margin: 1.35rem 0 1.25rem;
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(3rem, 8vw, 5.6rem);
+            line-height: 0.94;
+            letter-spacing: -0.06em;
+            font-weight: 800;
+            text-wrap: balance;
+        }
+
+        .hero-title .accent {
+            display: block;
+            color: var(--sky-300);
+        }
+
+        .hero-description {
+            max-width: 520px;
+            font-size: 1.07rem;
+            line-height: 1.8;
+            color: rgba(255, 255, 255, 0.83);
+            margin-bottom: 2rem;
+        }
+
+        .hero-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .btn-hero-primary,
+        .btn-hero-secondary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.65rem;
+            min-height: 54px;
+            padding: 0.95rem 1.5rem;
+            border-radius: 16px;
+            font-weight: 700;
+            font-size: 0.96rem;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+        }
+
+        .btn-hero-primary {
+            color: var(--navy-950);
+            background: #ffffff;
+            border: 1px solid rgba(255, 255, 255, 0.95);
+            box-shadow: 0 16px 34px rgba(5, 22, 38, 0.18);
+        }
+
+        .btn-hero-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 20px 40px rgba(5, 22, 38, 0.2);
+        }
+
+        .btn-hero-secondary {
+            color: white;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        }
+
+        .btn-hero-secondary:hover {
+            transform: translateY(-1px);
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.28);
+        }
+
+        .hero-panel-wrap {
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        .hero-panel {
+            width: min(100%, 430px);
+            padding: 1.75rem;
+            border-radius: 28px;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.17) 0%, rgba(255, 255, 255, 0.08) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow: var(--shadow-card);
+            -webkit-backdrop-filter: blur(18px);
+            backdrop-filter: blur(18px);
+        }
+
+        .panel-badges {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.35rem;
+        }
+
+        .panel-icon,
+        .panel-shield {
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #ffffff;
+        }
+
+        .panel-icon {
+            background: linear-gradient(135deg, rgba(66, 146, 228, 0.95) 0%, rgba(77, 174, 255, 0.72) 100%);
+        }
+
+        .panel-shield {
+            background: rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.82);
+        }
+
+        .hero-panel h2 {
+            font-family: 'Sora', sans-serif;
+            font-size: 1.45rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin: 0 0 0.7rem;
+        }
+
+        .hero-panel p {
+            color: rgba(255, 255, 255, 0.74);
+            font-size: 0.98rem;
+            line-height: 1.75;
+            margin-bottom: 1.3rem;
+        }
+
+        .progress-shell {
+            padding-top: 0.4rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .progress-labels,
+        .panel-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            font-size: 0.82rem;
+            color: rgba(255, 255, 255, 0.74);
+        }
+
+        .progress-bar-wrap {
+            margin: 0.9rem 0 1rem;
+            height: 8px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.12);
+            overflow: hidden;
+        }
+
+        .progress-bar-value {
+            height: 100%;
+            width: 78%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #9ed2ff 0%, #4eabff 100%);
+        }
+
+        .hero-facts {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.9rem;
+            margin-top: 1.2rem;
+        }
+
+        .hero-fact {
+            padding: 1rem 0.9rem;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: left;
+        }
+
+        .hero-fact strong {
+            display: block;
+            font-family: 'Sora', sans-serif;
+            font-size: 1.05rem;
+            letter-spacing: -0.03em;
+            margin-bottom: 0.25rem;
+        }
+
+        .hero-fact span {
+            color: rgba(255, 255, 255, 0.72);
+            font-size: 0.84rem;
+            line-height: 1.5;
+        }
+
+        .section-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: end;
+            justify-content: space-between;
+            gap: 1.5rem;
+            margin-bottom: 2.75rem;
+        }
+
+        .section-header .eyebrow {
+            color: var(--navy-800);
+            background: rgba(19, 75, 130, 0.08);
+        }
+
+        .feature-card {
+            position: relative;
+            height: 100%;
+            padding: 2rem;
+            border-radius: 26px;
+            background: var(--surface);
+            border: 1px solid var(--border-soft);
+            box-shadow: var(--shadow-soft);
+            overflow: hidden;
+            transition: transform 0.25s ease, box-shadow 0.25s ease;
+        }
+
+        .feature-card::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(16, 36, 66, 0) 0%, rgba(63, 135, 208, 0.025) 100%);
+            pointer-events: none;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-6px);
+            box-shadow: 0 24px 64px rgba(12, 39, 70, 0.12);
+        }
+
+        .feature-icon {
+            width: 58px;
+            height: 58px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 18px;
+            font-size: 1.15rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .feature-icon.blue {
+            color: #0d4b8a;
+            background: rgba(77, 153, 230, 0.16);
+        }
+
+        .feature-icon.sky {
+            color: #116fa3;
+            background: rgba(64, 189, 234, 0.16);
+        }
+
+        .feature-icon.gold {
+            color: #a45b1b;
+            background: rgba(247, 177, 113, 0.2);
+        }
+
+        .feature-card h3 {
+            font-family: 'Sora', sans-serif;
+            font-size: 1.28rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin: 0 0 0.85rem;
+        }
+
+        .feature-card p {
+            margin: 0;
+            color: var(--ink-700);
+            line-height: 1.75;
+        }
+
+        .manual-section {
+            background: linear-gradient(180deg, #edf1f6 0%, #f5f6f9 100%);
+        }
+
+        .manual-grid {
+            display: grid;
+            grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.35fr);
+            gap: 1.75rem;
+            align-items: start;
+        }
+
+        .manual-summary {
+            position: sticky;
+            top: 104px;
+            padding: 2rem;
+            border-radius: var(--radius-xl);
+            background: radial-gradient(circle at top right, rgba(122, 182, 255, 0.24), transparent 38%), linear-gradient(160deg, #ffffff 0%, #eef4fb 100%);
+            border: 1px solid rgba(16, 36, 66, 0.08);
+            box-shadow: var(--shadow-soft);
+        }
+
+        .manual-logos {
+            display: flex;
+            align-items: center;
+            gap: 0.85rem;
+            margin-bottom: 1.75rem;
+        }
+
+        .manual-logos img {
+            width: 62px;
+            height: 62px;
+            object-fit: contain;
+            border-radius: 18px;
+            background: #ffffff;
+            padding: 0.4rem;
+            box-shadow: 0 14px 26px rgba(10, 33, 60, 0.08);
+        }
+
+        .manual-summary .eyebrow {
+            color: var(--navy-800);
+            background: rgba(19, 75, 130, 0.08);
+            margin-bottom: 1rem;
+        }
+
+        .manual-summary h3 {
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(1.9rem, 4vw, 2.75rem);
+            font-weight: 700;
+            letter-spacing: -0.04em;
+            line-height: 1.06;
+            margin-bottom: 1rem;
+        }
+
+        .manual-summary h4 {
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+            color: var(--navy-800);
+            margin-bottom: 1.1rem;
+        }
+
+        .manual-summary p {
+            color: var(--ink-700);
+            line-height: 1.8;
+            margin-bottom: 1.2rem;
+        }
+
+        .manual-points {
+            display: grid;
+            gap: 0.9rem;
+            margin: 1.6rem 0 1.8rem;
+        }
+
+        .manual-point {
+            display: flex;
+            gap: 0.85rem;
+            align-items: flex-start;
+            padding: 1rem;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.86);
+            border: 1px solid rgba(16, 36, 66, 0.08);
+        }
+
+        .manual-point i {
+            margin-top: 0.15rem;
+            color: var(--navy-800);
+        }
+
+        .manual-point strong {
+            display: block;
+            font-size: 0.98rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .manual-point span {
+            color: var(--ink-700);
+            font-size: 0.92rem;
+            line-height: 1.6;
+        }
+
+        .manual-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.85rem;
+        }
+
+        .manual-actions .btn {
+            min-height: 50px;
+            padding: 0.88rem 1.15rem;
+            border-radius: 15px;
+            font-weight: 700;
+            border: 1px solid rgba(16, 36, 66, 0.1);
+        }
+
+        .manual-actions .btn-primary {
+            background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-800) 100%);
+            box-shadow: 0 16px 30px rgba(13, 53, 95, 0.16);
+        }
+
+        .manual-actions .btn-outline-secondary {
+            color: var(--ink-900);
+            background: rgba(255, 255, 255, 0.7);
+        }
+
+        .manual-content .accordion-item {
+            border: 1px solid rgba(16, 36, 66, 0.08);
+            border-radius: 22px;
+            overflow: hidden;
+            box-shadow: 0 14px 34px rgba(10, 33, 60, 0.06);
+            background: rgba(255, 255, 255, 0.9);
+        }
+
+        .manual-content .accordion-item + .accordion-item {
+            margin-top: 1rem;
+        }
+
+        .manual-content .accordion-button {
+            padding: 1.35rem 1.5rem;
+            gap: 1rem;
+            font-family: 'Sora', sans-serif;
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--ink-900);
+            background: #ffffff;
+            box-shadow: none;
+        }
+
+        .manual-content .accordion-button:not(.collapsed) {
+            color: var(--navy-900);
+            background: linear-gradient(180deg, #ffffff 0%, #f3f7fc 100%);
+        }
+
+        .manual-content .accordion-button::after {
+            background-size: 1rem;
+        }
+
+        .manual-step {
+            flex: 0 0 auto;
+            width: 48px;
+            height: 48px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 16px;
+            background: rgba(19, 75, 130, 0.08);
+            color: var(--navy-800);
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+
+        .manual-title {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 0.18rem;
+            text-align: left;
+        }
+
+        .manual-title small {
+            color: var(--ink-500);
+            font-family: 'Manrope', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .manual-content .accordion-body {
+            padding: 1.75rem 1.6rem 2rem;
+            color: var(--ink-700);
+            line-height: 1.8;
+            background: rgba(255, 255, 255, 0.96);
+        }
+
+        .manual-content .accordion-body h5,
+        .manual-content .accordion-body h6 {
+            color: var(--ink-900);
+        }
+
+        .manual-content .accordion-body .text-primary {
+            color: var(--navy-800) !important;
+        }
+
+        .manual-content ul,
+        .manual-content ol {
+            padding-left: 1.3rem;
+        }
+
+        .manual-content li {
+            margin-bottom: 0.55rem;
+        }
+
+        .insights-grid {
+            display: grid;
+            grid-template-columns: 1.15fr 1fr;
+            gap: 1rem;
+        }
+
+        .insight-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 28px;
+            min-height: 240px;
+            padding: 1.8rem;
+            border: 1px solid rgba(16, 36, 66, 0.08);
+            box-shadow: var(--shadow-soft);
+            background: var(--surface);
+        }
+
+        .insight-card.dark {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            min-height: 430px;
+            color: white;
+            background: radial-gradient(circle at top right, rgba(100, 171, 255, 0.22), transparent 34%), linear-gradient(160deg, #0b3260 0%, #0d4b8a 100%);
+        }
+
+        .insight-card.dark::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0) 20%, rgba(5, 22, 38, 0.12) 100%);
+        }
+
+        .insight-card.image {
+            min-height: 200px;
+            color: white;
+            background: linear-gradient(135deg, rgba(8, 39, 70, 0.72) 0%, rgba(19, 75, 130, 0.42) 100%), url('img/bg.jpg') center center / cover no-repeat;
+        }
+
+        .insight-card.blue {
+            background: linear-gradient(150deg, #0f4e8f 0%, #1d7bd1 100%);
+            color: white;
+        }
+
+        .insight-card.light {
+            background: linear-gradient(180deg, #ffffff 0%, #f3f6fb 100%);
+        }
+
+        .insight-card .eyebrow {
+            margin-bottom: 0.85rem;
+            color: inherit;
+            background: rgba(255, 255, 255, 0.14);
+        }
+
+        .insight-card.light .eyebrow {
+            color: var(--navy-800);
+            background: rgba(19, 75, 130, 0.08);
+        }
+
+        .insight-card h3 {
+            position: relative;
+            margin: 0 0 0.8rem;
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(1.6rem, 3vw, 2.4rem);
+            letter-spacing: -0.04em;
+            line-height: 1.08;
+        }
+
+        .insight-card p,
+        .insight-card span {
+            position: relative;
+            margin: 0;
+            line-height: 1.75;
+        }
+
+        .insight-subgrid {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .insight-mini-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1rem;
+        }
+
+        .metric {
+            display: inline-block;
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(2rem, 4vw, 3rem);
+            font-weight: 700;
+            letter-spacing: -0.05em;
+            line-height: 1;
+            margin-bottom: 0.5rem;
+        }
+
+        .cta-section {
+            padding-top: 0;
+        }
+
+        .cta-card {
+            position: relative;
+            overflow: hidden;
+            padding: clamp(2rem, 5vw, 3rem);
+            border-radius: 30px;
+            background: radial-gradient(circle at top center, rgba(94, 165, 255, 0.22), transparent 32%), linear-gradient(145deg, #0b3563 0%, #0d4c8b 100%);
+            color: white;
+            text-align: center;
+            box-shadow: 0 26px 54px rgba(10, 33, 60, 0.18);
+        }
+
+        .cta-card::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0, rgba(255, 255, 255, 0.04) 1px, transparent 1px, transparent 80px),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0, rgba(255, 255, 255, 0.03) 1px, transparent 1px, transparent 80px);
+            opacity: 0.3;
+        }
+
+        .cta-card > * {
+            position: relative;
+        }
+
+        .cta-card h2 {
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(2rem, 5vw, 3.25rem);
+            font-weight: 700;
+            letter-spacing: -0.05em;
+            line-height: 1.05;
+            max-width: 700px;
+            margin: 0 auto 1rem;
+        }
+
+        .cta-card p {
+            max-width: 660px;
+            margin: 0 auto 1.8rem;
+            color: rgba(255, 255, 255, 0.8);
+            line-height: 1.8;
+        }
+
+        .cta-actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 1rem;
+        }
+
+        .cta-actions .btn {
+            min-height: 54px;
+            padding: 0.95rem 1.35rem;
+            border-radius: 16px;
+            font-weight: 700;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+        }
+
+        .cta-actions .btn-light {
+            color: var(--navy-950);
+            box-shadow: 0 16px 34px rgba(5, 22, 38, 0.18);
+        }
+
+        .cta-actions .btn-outline-light {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .site-footer {
+            background: transparent;
+            color: var(--ink-900);
+            text-align: left;
+            padding: 2.25rem 0 3rem;
+        }
+
+        .footer-shell {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 1.5rem;
+            align-items: center;
+            padding-top: 1.4rem;
+            border-top: 1px solid rgba(16, 36, 66, 0.08);
+        }
+
+        .footer-brand strong {
+            display: block;
+            font-family: 'Sora', sans-serif;
+            font-size: 1rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .footer-brand span,
+        .footer-copy {
+            color: var(--ink-500);
+            line-height: 1.6;
+            font-size: 0.9rem;
+        }
+
+        .footer-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem 1.25rem;
+            justify-content: flex-end;
+        }
+
+        .footer-links a {
+            color: var(--ink-700);
+            font-size: 0.92rem;
+            font-weight: 600;
+        }
+
+        .footer-links a:hover {
+            color: var(--navy-900);
+        }
+
+        .footer-social {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            justify-content: flex-end;
+        }
+
+        .footer-social a {
+            width: 38px;
+            height: 38px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            color: var(--navy-900);
+            background: rgba(19, 75, 130, 0.08);
+            transition: background-color 0.2s ease, transform 0.2s ease;
+        }
+
+        .footer-social a:hover {
+            transform: translateY(-1px);
+            background: rgba(19, 75, 130, 0.16);
+        }
+
+        @media (max-width: 991.98px) {
+            .site-navbar .navbar-collapse {
+                margin-top: 0.85rem;
+                padding: 1rem;
+                border-radius: 20px;
+                background: rgba(255, 255, 255, 0.92);
+                border: 1px solid rgba(16, 36, 66, 0.08);
+                box-shadow: 0 18px 36px rgba(10, 33, 60, 0.08);
+            }
+
+            .hero-layout {
+                row-gap: 2.4rem;
+                min-height: auto;
+            }
+
+            .hero-panel-wrap {
+                justify-content: flex-start;
+            }
+
+            .manual-grid,
+            .insights-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .manual-summary {
+                position: static;
+            }
+        }
+
+        @media (max-width: 767.98px) {
+            .section-spacing {
+                padding: 64px 0;
+            }
+
+            .hero-section {
+                padding-bottom: 72px;
+            }
+
+            .hero-title {
+                font-size: clamp(2.5rem, 16vw, 4rem);
+            }
+
+            .hero-facts,
+            .insight-mini-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .feature-card,
+            .manual-summary,
+            .hero-panel,
+            .insight-card,
+            .cta-card {
+                border-radius: 24px;
+            }
+
+            .footer-shell {
+                align-items: flex-start;
+            }
+
+            .footer-links {
+                justify-content: flex-start;
+            }
+
+            .footer-social {
+                justify-content: flex-start;
+            }
+        }
+    </style>
 </head>
 <body>
 
-    <!-- Navbar -->
-    <nav class="navbar navbar-expand-lg navbar-dark">
+    <nav class="navbar navbar-expand-lg site-navbar">
         <div class="container">
             <a class="navbar-brand" href="index.html">
-                <img src="img/logo.png" alt="RServe Logo" onerror="this.src='img/rss.png'">
-                <span>RServeS</span>
-            </a><br>
-            <br>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
+                <img src="img/logo.png" alt="RServeS Logo" class="brand-logo" onerror="this.src='img/rss.png'">
+                <span class="brand-text">RServeS</span>
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <i class="fas fa-bars"></i>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto align-items-center">
-                    <li class="nav-item me-3">
+                <ul class="navbar-nav mx-auto align-items-lg-center">
+                    <li class="nav-item">
                         <a class="nav-link" href="#features">Features</a>
                     </li>
-                    <li class="nav-item me-3">
+                    <li class="nav-item">
                         <a class="nav-link" href="#manual">RSS Manual</a>
                     </li>
                     <li class="nav-item">
-                        <a href="home2.php" class="btn btn-outline-primary">Sign In</a>
+                        <a class="nav-link" href="#insights">Highlights</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#footer">Support</a>
                     </li>
                 </ul>
+                <div class="d-flex mt-3 mt-lg-0">
+                    <a href="home2.php" class="navbar-cta">Sign In</a>
+                </div>
             </div>
         </div>
     </nav>
 
-    <!-- Hero Section -->
-    <section class="hero-section d-flex align-items-center" data-image="index_background.png">
-        <div class="hero-visual" aria-hidden="true"></div>
-        <div class="hero-bubbles" aria-hidden="true">
-            <span class="bubble b1"></span>
-            <span class="bubble b2"></span>
-            <span class="bubble b3"></span>
-            <span class="bubble b4"></span>
-            <span class="bubble b5"></span>
-            <span class="bubble b6"></span>
-            <span class="bubble b7"></span>
-            <span class="bubble b8"></span>
-        </div>
-        <div class="container-fluid px-5">
-            <div class="row align-items-center">
-                <div class="col-lg-7 hero-content">
-                    <br>
-                    <br>
-                    <h1>Return of Service Agreement</h1>
-                    <p>Streamline your return of service tracking, management, and reporting with RServeS. The all-in-one platform for students, coordinators, and instructors.</p>
-                    <div class="d-flex gap-3">
-                        <a href="home2.php" class="btn btn-primary btn-lg px-4 py-3">
-                            Get Started <i class="fas fa-arrow-right ms-2"></i>
-                        </a>
-                        <a href="#features" class="btn btn-outline-light btn-lg px-4 py-3">
-                            Learn More
-                        </a>
+    <section class="hero-section">
+        <div class="container">
+            <div class="row hero-layout g-4">
+                <div class="col-lg-7">
+                    <div class="hero-copy">
+                        <span class="eyebrow">Community Extension Excellence</span>
+                        <h1 class="hero-title">
+                            <span>Return of</span>
+                            <span class="accent">Service</span>
+                            <span>Agreement.</span>
+                        </h1>
+                        <p class="hero-description">
+                            Streamline your return of service tracking, management, and reporting with RServeS. The all-in-one platform for students, coordinators, and instructors.
+                        </p>
+                        <div class="hero-actions">
+                            <a href="home2.php" class="btn-hero-primary">
+                                Get Started
+                                <i class="fas fa-arrow-right"></i>
+                            </a>
+                            <a href="#features" class="btn-hero-secondary">
+                                Learn More
+                            </a>
+                        </div>
                     </div>
                 </div>
-                <!-- Optional: Hero Image on the right if needed, or keep it text-heavy with bg -->
+                <div class="col-lg-5">
+                    <div class="hero-panel-wrap">
+                        <div class="hero-panel">
+                            <div class="panel-badges">
+                                <span class="panel-icon"><i class="fas fa-chart-line"></i></span>
+                                <span class="panel-shield"><i class="fas fa-shield-alt"></i></span>
+                            </div>
+                            <h2>Live Compliance Dashboard</h2>
+                            <p>Modernize the bridge between academic investment and professional commitment through rigorous tracking, documentation, and institution-ready reporting.</p>
+                            <div class="progress-shell">
+                                <div class="progress-labels">
+                                    <span>Active Commitments</span>
+                                    <span>Policy Progress</span>
+                                </div>
+                                <div class="progress-bar-wrap" aria-hidden="true">
+                                    <div class="progress-bar-value"></div>
+                                </div>
+                                <div class="panel-meta">
+                                    <span>120-hour service model</span>
+                                    <span>Certificate-ready workflow</span>
+                                </div>
+                            </div>
+                            <div class="hero-facts">
+                                <div class="hero-fact">
+                                    <strong>Students</strong>
+                                    <span>Track tasks, hours, and submissions in one place.</span>
+                                </div>
+                                <div class="hero-fact">
+                                    <strong>Coordinators</strong>
+                                    <span>Review accomplishment reports with complete context.</span>
+                                </div>
+                                <div class="hero-fact">
+                                    <strong>Instructors</strong>
+                                    <span>Monitor progress and support timely completion.</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
 
-    <!-- Features Section -->
-    <section id="features" class="features-section">
+    <section id="features" class="section-spacing">
         <div class="container">
-            <div class="text-center mb-5">
-                <h2 class="fw-bold display-5 mb-3" style="color: var(--secondary-color);">Why Choose RServeS?</h2>
-                <p class="text-muted lead">Designed to make extension service management efficient and paperless.</p>
+            <div class="section-header">
+                <div>
+                    <span class="eyebrow">Why Choose RServeS?</span>
+                    <h2 class="section-heading">Designed to make extension service management efficient and paperless.</h2>
+                </div>
+                <p class="section-copy">RServeS keeps the landing page content intact while presenting it in a more polished, institutional interface built for trust, clarity, and momentum.</p>
             </div>
-            
+
             <div class="row g-4">
                 <div class="col-md-4">
-                    <div class="feature-card">
-                        <div class="feature-icon">
+                    <article class="feature-card">
+                        <div class="feature-icon blue">
                             <i class="fas fa-file-contract"></i>
                         </div>
                         <h3>Digital Documentation</h3>
                         <p>Say goodbye to lost paperwork. Manage waivers, agreements, and enrollment forms digitally with secure cloud storage.</p>
-                    </div>
+                    </article>
                 </div>
                 <div class="col-md-4">
-                    <div class="feature-card">
-                        <div class="feature-icon">
+                    <article class="feature-card">
+                        <div class="feature-icon sky">
                             <i class="fas fa-clock"></i>
                         </div>
                         <h3>Real-time Tracking</h3>
                         <p>Track student hours and accomplishments in real-time. Instructors and coordinators can monitor progress effortlessly.</p>
-                    </div>
+                    </article>
                 </div>
                 <div class="col-md-4">
-                    <div class="feature-card">
-                        <div class="feature-icon">
+                    <article class="feature-card">
+                        <div class="feature-icon gold">
                             <i class="fas fa-chart-pie"></i>
                         </div>
                         <h3>Insightful Reporting</h3>
                         <p>Generate comprehensive reports and visualize data with intuitive dashboards tailored for every user role.</p>
-                    </div>
+                    </article>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- RSS Manual Section -->
-    <section id="manual" class="manual-section">
+    <section id="manual" class="manual-section section-spacing">
         <div class="container">
-            <div class="text-center mb-5">
-                <h2 class="fw-bold display-5 mb-3" style="color: var(--secondary-color);">RSS Policy Manual</h2>
-                <p class="text-muted lead">Official guidelines and information regarding the Return of Service System.</p>
-            </div>
+            <div class="manual-grid">
+                <aside class="manual-summary">
+                    <div class="manual-logos">
+                        <img src="img/cleaned_logo.png" alt="RServeS emblem" onerror="this.style.display='none'">
+                        <img src="img/llcc.png" alt="LLCC emblem" onerror="this.style.display='none'">
+                    </div>
+                    <span class="eyebrow">RSS Policy Manual</span>
+                    <h3>Official guidelines for the Return of Service System.</h3>
+                    <h4>Lapu-Lapu City College</h4>
+                    <p>Official guidelines and information regarding the Return of Service System. The framework below preserves the full policy manual content while presenting it in a clearer, easier-to-scan format.</p>
+                    <p>The Return of Service System Policy Manual (RSSP) is built on transparency, accountability, and meaningful public service aligned with Republic Act No. 10931 and the UniFAST Act.</p>
 
-            <div class="manual-header">
-                <img src="img/cleaned_logo.png" alt="LLCC Logo" style="height: 80px; margin-bottom: 20px;" onerror="this.style.display='none'">
-                <img src="img/llcc.png" alt="LLCC Logo" style="height: 80px; margin-bottom: 20px;" onerror="this.style.display='none'">
-                <h3 class="fw-bold mb-2">LAPU-LAPU CITY COLLEGE</h3>
-                <h4 class="text-primary fw-bold mb-3">Return of Service System Policy Manual (RSSP)</h4>
-             
-            </div>
+                    <div class="manual-points">
+                        <div class="manual-point">
+                            <i class="fas fa-bullseye"></i>
+                            <div>
+                                <strong>120-hour service requirement</strong>
+                                <span>Beneficiaries must complete 120 hours of return service over three semesters.</span>
+                            </div>
+                        </div>
+                        <div class="manual-point">
+                            <i class="fas fa-certificate"></i>
+                            <div>
+                                <strong>Completion and certification</strong>
+                                <span>The College Dean and RSS Coordinator oversee progress and certify full compliance.</span>
+                            </div>
+                        </div>
+                        <div class="manual-point">
+                            <i class="fas fa-users"></i>
+                            <div>
+                                <strong>Applied to student beneficiaries</strong>
+                                <span>This policy applies to all undergraduate students covered under the Free Higher Education Program.</span>
+                            </div>
+                        </div>
+                    </div>
 
-            <div class="accordion manual-content" id="rssManualAccordion">
-                
-                <!-- Section 1: Introduction -->
-                <div class="card">
+                    <div class="manual-actions">
+                        <a href="#rssManualAccordion" class="btn btn-primary">Browse Policy Sections</a>
+                        <a href="home2.php" class="btn btn-outline-secondary">Open RServeS</a>
+                    </div>
+                </aside>
+
+                <div class="accordion manual-content" id="rssManualAccordion">
+                    <div class="accordion-item">
                     <h2 class="accordion-header" id="headingOne">
                         <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne" aria-expanded="true" aria-controls="collapseOne">
-                            1. Introduction & Objectives
+                            <span class="manual-step">01</span>
+                            <span class="manual-title">
+                                <small>Section</small>
+                                <span>Introduction &amp; Objectives</span>
+                            </span>
                         </button>
                     </h2>
                     <div id="collapseOne" class="accordion-collapse collapse show" aria-labelledby="headingOne" data-bs-parent="#rssManualAccordion">
@@ -520,11 +1579,14 @@
                     </div>
                 </div>
 
-                <!-- Section 2: Policy Guidelines -->
-                <div class="card">
+                <div class="accordion-item">
                     <h2 class="accordion-header" id="headingTwo">
                         <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
-                            2. Policy Guidelines
+                            <span class="manual-step">02</span>
+                            <span class="manual-title">
+                                <small>Section</small>
+                                <span>Policy Guidelines</span>
+                            </span>
                         </button>
                     </h2>
                     <div id="collapseTwo" class="accordion-collapse collapse" aria-labelledby="headingTwo" data-bs-parent="#rssManualAccordion">
@@ -544,11 +1606,14 @@
                     </div>
                 </div>
 
-                <!-- Section 3: RSS Policy Details -->
-                <div class="card">
+                <div class="accordion-item">
                     <h2 class="accordion-header" id="headingThree">
                         <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree">
-                            3. RSS Policy Details
+                            <span class="manual-step">03</span>
+                            <span class="manual-title">
+                                <small>Section</small>
+                                <span>RSS Policy Details</span>
+                            </span>
                         </button>
                     </h2>
                     <div id="collapseThree" class="accordion-collapse collapse" aria-labelledby="headingThree" data-bs-parent="#rssManualAccordion">
@@ -579,11 +1644,14 @@
                     </div>
                 </div>
 
-                <!-- Section 4: Activity List -->
-                <div class="card">
+                <div class="accordion-item">
                     <h2 class="accordion-header" id="headingFour">
                         <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFour" aria-expanded="false" aria-controls="collapseFour">
-                            4. RSS Activity List
+                            <span class="manual-step">04</span>
+                            <span class="manual-title">
+                                <small>Section</small>
+                                <span>RSS Activity List</span>
+                            </span>
                         </button>
                     </h2>
                     <div id="collapseFour" class="accordion-collapse collapse" aria-labelledby="headingFour" data-bs-parent="#rssManualAccordion">
@@ -700,67 +1768,103 @@
 
             </div>
         </div>
+        </div>
     </section>
 
-    <!-- Footer -->
-    <footer>
+    <section id="insights" class="section-spacing">
         <div class="container">
-            <div class="row align-items-center">
-                <div class="col-md-6 text-md-start">
-                    <p class="mb-0">&copy; 2026 RServe. All rights reserved.</p>
+            <div class="section-header">
+                <div>
+                    <span class="eyebrow">Operational Highlights</span>
+                    <h2 class="section-heading">A landing page that feels more institutional, modern, and trustworthy.</h2>
                 </div>
-                <div class="col-md-6 text-md-end">
-                    <div class="d-flex justify-content-md-end gap-3">
-                        <a href="#" class="text-white text-decoration-none"><i class="fab fa-facebook"></i></a>
-                        <a href="#" class="text-white text-decoration-none"><i class="fab fa-twitter"></i></a>
-                        <a href="#" class="text-white text-decoration-none"><i class="fab fa-instagram"></i></a>
+                <p class="section-copy">These supporting panels reinforce the same message already present in your content: secure digital records, visible progress, and policy-guided completion.</p>
+            </div>
+
+            <div class="insights-grid">
+                <article class="insight-card dark">
+                    <span class="eyebrow">RServeS Advantage</span>
+                    <h3>Structured Return Service Management for students, coordinators, and instructors.</h3>
+                    <p>RServeS combines documentation, tracking, and reporting so every role can move from agreement to accomplishment with less paperwork and more visibility.</p>
+                </article>
+
+                <div class="insight-subgrid">
+                    <article class="insight-card image">
+                        <span class="eyebrow">Secure Operations</span>
+                        <h3>Digital documentation with institution-ready oversight.</h3>
+                        <p>Manage waivers, agreements, enrollment forms, and accomplishment reports in a cleaner, more confident workflow.</p>
+                    </article>
+
+                    <div class="insight-mini-grid">
+                        <article class="insight-card blue">
+                            <span class="metric">120</span>
+                            <h3>Required Hours</h3>
+                            <p>40 hours per semester over 3 semesters.</p>
+                        </article>
+                        <article class="insight-card light">
+                            <span class="eyebrow">Certificate Path</span>
+                            <h3>Completion tracked end-to-end.</h3>
+                            <span>Oversight by the College Dean and designated College RSS Coordinator supports compliant, certificate-ready submission.</span>
+                        </article>
                     </div>
                 </div>
             </div>
         </div>
+    </section>
+
+    <section class="cta-section section-spacing">
+        <div class="container">
+            <div class="cta-card">
+                <h2>Ready to streamline return of service tracking?</h2>
+                <p>Launch the platform, review the policy manual, and move from paper-based coordination to a clearer digital workflow without losing the core institutional content already in place.</p>
+                <div class="cta-actions">
+                    <a href="home2.php" class="btn btn-light">Get Started</a>
+                    <a href="#manual" class="btn btn-outline-light">Read RSS Manual</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer id="footer" class="site-footer">
+        <div class="container">
+            <div class="footer-shell">
+                <div class="footer-brand">
+                    <strong>RServeS</strong>
+                    <span>Leading the standard for institutional return of service lifecycle management through digital excellence and policy-aligned workflows.</span>
+                </div>
+                <div class="footer-links">
+                    <a href="#features">Features</a>
+                    <a href="#manual">RSS Manual</a>
+                    <a href="#insights">Highlights</a>
+                    <a href="home2.php">Sign In</a>
+                </div>
+                <div class="footer-social">
+                    <a href="#" aria-label="Facebook"><i class="fab fa-facebook-f"></i></a>
+                    <a href="#" aria-label="Twitter"><i class="fab fa-twitter"></i></a>
+                    <a href="#" aria-label="Instagram"><i class="fab fa-instagram"></i></a>
+                </div>
+            </div>
+            <p class="footer-copy mt-4 mb-0">&copy; 2026 RServe. All rights reserved.</p>
+        </div>
     </footer>
 
-    <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    
     <script>
-        // Navbar scroll and toggle effect
-        const navbar = document.querySelector('.navbar');
+        const navbar = document.querySelector('.site-navbar');
         const navbarCollapse = document.getElementById('navbarNav');
 
         function updateNavbarStyle() {
-            const isScrolled = window.scrollY > 50;
+            const isScrolled = window.scrollY > 12;
             const isMenuOpen = navbarCollapse.classList.contains('show') || navbarCollapse.classList.contains('collapsing');
-            
-            // Reset classes
-            navbar.classList.remove('scrolled', 'navbar-light', 'mobile-active');
-            
-            if (isMenuOpen) {
-                // Menu open: Blue background, white text
-                navbar.classList.add('mobile-active', 'navbar-dark');
-            } else if (isScrolled) {
-                // Scrolled: Blue background, white text
-                navbar.classList.add('scrolled', 'navbar-dark');
-                navbar.classList.remove('navbar-light');
-            } else {
-                // Default: Transparent, white text
-                navbar.classList.add('navbar-dark');
-            }
+            navbar.classList.toggle('is-scrolled', isScrolled);
+            navbar.classList.toggle('mobile-active', isMenuOpen);
         }
 
-        // Listen for scroll
+        updateNavbarStyle();
         window.addEventListener('scroll', updateNavbarStyle);
-
-        // Listen for menu toggle events
-        navbarCollapse.addEventListener('show.bs.collapse', function() {
-            // Apply immediately when starting to show
-            navbar.classList.remove('scrolled', 'navbar-light');
-            navbar.classList.add('mobile-active', 'navbar-dark');
-        });
-        
-        navbarCollapse.addEventListener('hidden.bs.collapse', function() {
-            updateNavbarStyle();
-        });
+        navbarCollapse.addEventListener('show.bs.collapse', updateNavbarStyle);
+        navbarCollapse.addEventListener('hide.bs.collapse', updateNavbarStyle);
+        navbarCollapse.addEventListener('hidden.bs.collapse', updateNavbarStyle);
 
         document.querySelectorAll('a[href="home2.php"]').forEach((link) => {
             link.addEventListener('click', (e) => {

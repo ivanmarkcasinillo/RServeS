@@ -380,6 +380,190 @@ if ($advisers && $advisers->num_rows > 0) {
      $totalStudents += count($dept['students']);
      $totalInstructors += count($dept['instructors']);
  }
+
+function adminDashboardDepartmentIcon($departmentName) {
+    $name = strtolower($departmentName);
+
+    if (strpos($name, 'education') !== false) {
+        return 'fa-book-open';
+    }
+
+    if (strpos($name, 'technology') !== false) {
+        return 'fa-laptop-code';
+    }
+
+    if (strpos($name, 'hospitality') !== false || strpos($name, 'tourism') !== false) {
+        return 'fa-utensils';
+    }
+
+    return 'fa-university';
+}
+
+function adminDashboardRelativeTime($timestamp) {
+    if (empty($timestamp)) {
+        return 'Just now';
+    }
+
+    $createdAt = strtotime($timestamp);
+    if (!$createdAt) {
+        return 'Recently';
+    }
+
+    $elapsed = time() - $createdAt;
+
+    if ($elapsed < 60) {
+        return 'Just now';
+    }
+
+    if ($elapsed < 3600) {
+        $minutes = (int) floor($elapsed / 60);
+        return $minutes . ' min' . ($minutes === 1 ? '' : 's') . ' ago';
+    }
+
+    if ($elapsed < 86400) {
+        $hours = (int) floor($elapsed / 3600);
+        return $hours . ' hour' . ($hours === 1 ? '' : 's') . ' ago';
+    }
+
+    if ($elapsed < 172800) {
+        return 'Yesterday';
+    }
+
+    $days = (int) floor($elapsed / 86400);
+    if ($days < 7) {
+        return $days . ' days ago';
+    }
+
+    return date('M j, Y', $createdAt);
+}
+
+$pendingApprovals = 0;
+$verifiedDocuments = 0;
+$totalExpectedDocuments = $totalStudents * 3;
+$totalReadyStudents = 0;
+$totalCompletedStudents = 0;
+$totalApprovedHours = 0;
+$totalSections = 0;
+$assignedSections = 0;
+$departmentsWithStudents = 0;
+$departmentPerformance = [];
+
+foreach ($departments as $deptId => $dept) {
+    $deptStudents = $dept['students'] ?? [];
+    $deptInstructors = $dept['instructors'] ?? [];
+    $deptSections = $dept['sections'] ?? [];
+    $deptAdvisers = $dept['advisers'] ?? [];
+    $studentCount = count($deptStudents);
+
+    if ($studentCount > 0) {
+        $departmentsWithStudents++;
+    }
+
+    $deptPendingApprovals = 0;
+    $deptVerifiedDocuments = 0;
+    $deptReadyStudents = 0;
+    $deptCompletedStudents = 0;
+    $deptApprovedHours = 0;
+
+    foreach ($deptStudents as $student) {
+        foreach (['waiver_status', 'agreement_status', 'enrollment_status'] as $statusKey) {
+            $status = $student[$statusKey] ?? 'None';
+
+            if ($status === 'Pending') {
+                $pendingApprovals++;
+                $deptPendingApprovals++;
+            }
+
+            if ($status === 'Verified') {
+                $verifiedDocuments++;
+                $deptVerifiedDocuments++;
+            }
+        }
+
+        $overallStatus = $student['overall_status'] ?? 'Pending';
+        if ($overallStatus === 'Completed') {
+            $totalCompletedStudents++;
+            $deptCompletedStudents++;
+        }
+
+        if ($overallStatus === 'Verified' || $overallStatus === 'Completed') {
+            $totalReadyStudents++;
+            $deptReadyStudents++;
+        }
+
+        $approvedHours = (int) ($student['completed_hours'] ?? 0);
+        $totalApprovedHours += $approvedHours;
+        $deptApprovedHours += $approvedHours;
+    }
+
+    $sectionCount = count($deptSections);
+    $assignedCount = count($deptAdvisers);
+    $totalSections += $sectionCount;
+    $assignedSections += $assignedCount;
+
+    $documentRate = $studentCount > 0 ? (int) round(($deptVerifiedDocuments / ($studentCount * 3)) * 100) : 0;
+    $readinessRate = $studentCount > 0 ? (int) round(($deptReadyStudents / $studentCount) * 100) : 0;
+    $completionRate = $studentCount > 0 ? (int) round(($deptCompletedStudents / $studentCount) * 100) : 0;
+    $deptScore = $studentCount > 0 ? (int) round(($documentRate * 0.6) + ($readinessRate * 0.25) + ($completionRate * 0.15)) : 0;
+
+    $performanceLabel = 'Attention Needed';
+    $performanceTone = 'warning';
+    if ($deptScore >= 90) {
+        $performanceLabel = 'High Compliance';
+        $performanceTone = 'success';
+    } elseif ($deptScore >= 75) {
+        $performanceLabel = 'On Track';
+        $performanceTone = 'info';
+    }
+
+    $departmentPerformance[] = [
+        'id' => $deptId,
+        'name' => $dept['name'],
+        'icon' => adminDashboardDepartmentIcon($dept['name']),
+        'students' => $studentCount,
+        'instructors' => count($deptInstructors),
+        'sections' => $sectionCount,
+        'assigned_sections' => $assignedCount,
+        'pending_approvals' => $deptPendingApprovals,
+        'ready_students' => $deptReadyStudents,
+        'document_rate' => $documentRate,
+        'readiness_rate' => $readinessRate,
+        'completion_rate' => $completionRate,
+        'score' => max(0, min(100, $deptScore)),
+        'label' => $performanceLabel,
+        'tone' => $performanceTone,
+        'hours' => $deptApprovedHours
+    ];
+}
+
+usort($departmentPerformance, function ($left, $right) {
+    if ($left['score'] === $right['score']) {
+        return strcmp($left['name'], $right['name']);
+    }
+
+    return $right['score'] - $left['score'];
+});
+
+$documentComplianceRate = $totalExpectedDocuments > 0 ? (int) round(($verifiedDocuments / $totalExpectedDocuments) * 100) : 0;
+$studentReadinessRate = $totalStudents > 0 ? (int) round(($totalReadyStudents / $totalStudents) * 100) : 0;
+$overallCompletionRate = $totalStudents > 0 ? (int) round(($totalCompletedStudents / $totalStudents) * 100) : 0;
+$hoursProgressRate = $totalStudents > 0 ? (int) round(($totalApprovedHours / ($totalStudents * 300)) * 100) : 0;
+$globalHealthScore = $totalStudents > 0 ? (int) round(($documentComplianceRate * 0.6) + ($studentReadinessRate * 0.25) + ($overallCompletionRate * 0.15)) : 0;
+$globalHealthScore = max(0, min(100, $globalHealthScore));
+$sectionCoverageRate = $totalSections > 0 ? (int) round(($assignedSections / $totalSections) * 100) : 0;
+$departmentCoverageRate = $totalDepartments > 0 ? (int) round(($departmentsWithStudents / $totalDepartments) * 100) : 0;
+
+$dashboardState = 'optimal';
+$dashboardStateText = 'System status is performing strongly.';
+if ($pendingApprovals >= 15 || $globalHealthScore < 70) {
+    $dashboardState = 'attention';
+    $dashboardStateText = 'System status needs attention.';
+} elseif ($pendingApprovals >= 5 || $globalHealthScore < 85) {
+    $dashboardState = 'monitoring';
+    $dashboardStateText = 'System status is stable and under watch.';
+}
+
+$recentActivity = array_slice($notifications, 0, 4);
  $admin_email = $_SESSION['email'] ?? '';
 ?>
 <!DOCTYPE html>
@@ -722,9 +906,674 @@ if ($advisers && $advisers->num_rows > 0) {
             .rserve-page-loader { transition: none; }
             .rserve-page-loader__spinner { animation: none; }
         }
-    </style>
+
+        .admin-overview {
+            --admin-accent: #0f4c97;
+            --admin-accent-deep: #0a3470;
+            --admin-accent-soft: #eef4ff;
+            --admin-surface: #ffffff;
+            --admin-surface-muted: #f7fafe;
+            --admin-border: #dbe7f6;
+            --admin-ink: #10213d;
+            --admin-muted: #69809f;
+            --admin-success: #16795d;
+            --admin-success-soft: #dff7ed;
+            --admin-warning: #c97710;
+            --admin-warning-soft: #fff1d6;
+            --admin-info: #0c6ea8;
+            --admin-info-soft: #dff2fb;
+            color: var(--admin-ink);
+        }
+
+        .admin-overview-hero {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1.5rem;
+            margin-bottom: 1.75rem;
+        }
+
+        .admin-overview-copy {
+            max-width: 56rem;
+        }
+
+        .admin-overview-kicker {
+            margin: 0 0 0.7rem;
+            font-size: 0.78rem;
+            font-weight: 800;
+            letter-spacing: 0.24em;
+            text-transform: uppercase;
+            color: var(--admin-muted);
+        }
+
+        .admin-overview-title {
+            margin: 0;
+            font-size: clamp(2rem, 4.2vw, 3.4rem);
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            color: var(--admin-accent-deep);
+        }
+
+        .admin-overview-subtitle {
+            margin: 0.8rem 0 0;
+            max-width: 48rem;
+            font-size: 1.05rem;
+            color: #556b88;
+        }
+
+        .admin-overview-subtitle strong {
+            color: var(--admin-accent);
+            font-weight: 800;
+        }
+
+        .admin-state-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            padding: 0.85rem 1.05rem;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.88);
+            border: 1px solid var(--admin-border);
+            color: var(--admin-accent-deep);
+            font-weight: 700;
+            box-shadow: 0 16px 32px rgba(15, 37, 76, 0.08);
+            white-space: nowrap;
+        }
+
+        .admin-state-dot {
+            width: 0.7rem;
+            height: 0.7rem;
+            border-radius: 999px;
+            background: #0f4c97;
+            box-shadow: 0 0 0 6px rgba(15, 76, 151, 0.12);
+            flex-shrink: 0;
+        }
+
+        .admin-state-badge.is-monitoring .admin-state-dot {
+            background: #c97710;
+            box-shadow: 0 0 0 6px rgba(201, 119, 16, 0.14);
+        }
+
+        .admin-state-badge.is-attention .admin-state-dot {
+            background: #c5542d;
+            box-shadow: 0 0 0 6px rgba(197, 84, 45, 0.14);
+        }
+
+        .admin-overview-top-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.8fr) repeat(2, minmax(220px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .admin-card {
+            position: relative;
+            overflow: hidden;
+            background: var(--admin-surface);
+            border: 1px solid rgba(219, 231, 246, 0.95);
+            border-radius: 28px;
+            box-shadow: 0 24px 60px rgba(16, 33, 61, 0.08);
+        }
+
+        .admin-focus-card {
+            display: grid;
+            grid-template-columns: minmax(0, 1.2fr) auto;
+            gap: 1.5rem;
+            align-items: center;
+            padding: 1.9rem 2rem;
+            background:
+                linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(245, 249, 255, 0.92)),
+                radial-gradient(circle at top left, rgba(15, 76, 151, 0.18), transparent 36%);
+        }
+
+        .admin-focus-card::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 1.4rem;
+            bottom: 1.4rem;
+            width: 4px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, var(--admin-accent), #2e78c7);
+        }
+
+        .admin-focus-kicker {
+            margin: 0 0 0.85rem;
+            font-size: 0.9rem;
+            font-weight: 800;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: #4f75a5;
+        }
+
+        .admin-focus-title {
+            margin: 0;
+            font-size: clamp(1.8rem, 3vw, 2.9rem);
+            font-weight: 800;
+            letter-spacing: -0.04em;
+        }
+
+        .admin-focus-text {
+            margin: 0.9rem 0 1.4rem;
+            max-width: 32rem;
+            color: #4b617c;
+            font-size: 1rem;
+            line-height: 1.65;
+        }
+
+        .admin-focus-stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.85rem;
+            margin-bottom: 1.35rem;
+        }
+
+        .admin-focus-chip {
+            min-width: 10.75rem;
+            padding: 0.9rem 1rem;
+            border-radius: 18px;
+            background: var(--admin-surface-muted);
+            border: 1px solid rgba(219, 231, 246, 0.95);
+        }
+
+        .admin-focus-chip-label {
+            display: block;
+            margin-bottom: 0.3rem;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--admin-muted);
+        }
+
+        .admin-focus-chip-value {
+            display: block;
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: var(--admin-accent-deep);
+        }
+
+        .admin-focus-progress {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .admin-focus-progress-copy {
+            min-width: 10rem;
+            font-size: 0.95rem;
+            font-weight: 800;
+            color: var(--admin-accent-deep);
+        }
+
+        .admin-focus-progress-track {
+            position: relative;
+            flex: 1;
+            height: 0.65rem;
+            border-radius: 999px;
+            background: rgba(15, 76, 151, 0.12);
+            overflow: hidden;
+        }
+
+        .admin-focus-progress-track span {
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 0;
+            border-radius: inherit;
+            background: linear-gradient(90deg, var(--admin-accent-deep), #2b7acb);
+        }
+
+        .admin-score-ring {
+            --score: 0;
+            position: relative;
+            width: 11rem;
+            height: 11rem;
+            border-radius: 50%;
+            background: conic-gradient(var(--admin-accent) calc(var(--score) * 1%), rgba(15, 76, 151, 0.10) 0);
+            display: grid;
+            place-items: center;
+            flex-shrink: 0;
+        }
+
+        .admin-score-ring::before {
+            content: '';
+            position: absolute;
+            inset: 1.15rem;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: inset 0 0 0 1px rgba(219, 231, 246, 0.95);
+        }
+
+        .admin-score-ring-value {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            color: var(--admin-accent);
+            font-weight: 800;
+            line-height: 1;
+        }
+
+        .admin-score-ring-value strong {
+            display: block;
+            font-size: 2.2rem;
+            letter-spacing: -0.06em;
+        }
+
+        .admin-score-ring-value span {
+            display: block;
+            margin-top: 0.3rem;
+            font-size: 0.78rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--admin-muted);
+        }
+
+        .admin-summary-card {
+            padding: 1.65rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 100%;
+        }
+
+        .admin-summary-icon {
+            width: 3.1rem;
+            height: 3.1rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 18px;
+            background: var(--admin-accent-soft);
+            color: var(--admin-accent);
+            font-size: 1.3rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .admin-summary-label {
+            display: block;
+            margin-bottom: 0.35rem;
+            font-size: 0.95rem;
+            color: #607897;
+            font-weight: 700;
+        }
+
+        .admin-summary-value {
+            margin: 0;
+            font-size: 2.15rem;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            color: var(--admin-ink);
+        }
+
+        .admin-summary-footer {
+            margin-top: 1.4rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(219, 231, 246, 0.95);
+            display: flex;
+            justify-content: space-between;
+            gap: 0.8rem;
+            font-size: 0.92rem;
+            color: var(--admin-muted);
+        }
+
+        .admin-summary-footer strong {
+            color: var(--admin-accent-deep);
+            font-weight: 800;
+        }
+
+        .admin-overview-main-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.9fr);
+            gap: 1.75rem;
+            align-items: start;
+        }
+
+        .admin-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .admin-section-title {
+            margin: 0;
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+        }
+
+        .admin-section-link {
+            border: 0;
+            background: transparent;
+            padding: 0;
+            color: var(--admin-accent-deep);
+            font-size: 1rem;
+            font-weight: 800;
+        }
+
+        .admin-performance-list {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .admin-department-card {
+            padding: 1.4rem 1.5rem;
+        }
+
+        .admin-department-head {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .admin-department-icon {
+            width: 3.4rem;
+            height: 3.4rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 18px;
+            background: var(--admin-surface-muted);
+            color: var(--admin-accent-deep);
+            font-size: 1.25rem;
+        }
+
+        .admin-department-name {
+            margin: 0;
+            font-size: 1.45rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+        }
+
+        .admin-department-meta {
+            margin: 0.2rem 0 0;
+            color: var(--admin-muted);
+            font-weight: 600;
+        }
+
+        .admin-status-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.55rem 0.9rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 800;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .admin-status-pill.is-success {
+            color: var(--admin-success);
+            background: var(--admin-success-soft);
+        }
+
+        .admin-status-pill.is-info {
+            color: var(--admin-info);
+            background: var(--admin-info-soft);
+        }
+
+        .admin-status-pill.is-warning {
+            color: var(--admin-warning);
+            background: var(--admin-warning-soft);
+        }
+
+        .admin-department-progress {
+            position: relative;
+            height: 0.7rem;
+            border-radius: 999px;
+            background: rgba(15, 76, 151, 0.10);
+            overflow: hidden;
+        }
+
+        .admin-department-progress span {
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 0;
+            border-radius: inherit;
+            background: linear-gradient(90deg, var(--admin-accent-deep), #2576c7);
+        }
+
+        .admin-department-footer {
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.85rem;
+            margin-top: 0.95rem;
+            color: var(--admin-muted);
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+
+        .admin-side-stack {
+            display: grid;
+            gap: 1.25rem;
+        }
+
+        .admin-quick-card {
+            padding: 1.5rem;
+            background: linear-gradient(160deg, #144784, #275d9a);
+            color: #ffffff;
+        }
+
+        .admin-quick-card .admin-section-title,
+        .admin-quick-card .admin-section-link {
+            color: #ffffff;
+        }
+
+        .admin-action-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.85rem;
+            margin-top: 1.1rem;
+        }
+
+        .admin-action-tile {
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.10);
+            color: #ffffff;
+            border-radius: 18px;
+            padding: 1.15rem 0.95rem;
+            min-height: 8.3rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            gap: 0.8rem;
+            transition: transform 180ms ease, background 180ms ease;
+        }
+
+        .admin-action-tile:hover {
+            transform: translateY(-2px);
+            background: rgba(255, 255, 255, 0.16);
+        }
+
+        .admin-action-icon {
+            width: 2.6rem;
+            height: 2.6rem;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.92);
+            color: #154884;
+            font-size: 1.05rem;
+        }
+
+        .admin-action-label {
+            font-size: 0.9rem;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .admin-activity-card {
+            padding: 1.45rem 1.5rem;
+        }
+
+        .admin-activity-timeline {
+            position: relative;
+            margin-top: 1.2rem;
+            padding-left: 1.05rem;
+        }
+
+        .admin-activity-timeline::before {
+            content: '';
+            position: absolute;
+            left: 0.25rem;
+            top: 0.2rem;
+            bottom: 0.2rem;
+            width: 2px;
+            background: rgba(15, 76, 151, 0.12);
+        }
+
+        .admin-activity-item,
+        .admin-activity-empty {
+            position: relative;
+        }
+
+        .admin-activity-item {
+            width: 100%;
+            margin: 0 0 1.1rem;
+            padding: 0 0 0 1.5rem;
+            border: 0;
+            background: transparent;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .admin-activity-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .admin-activity-item::before {
+            content: '';
+            position: absolute;
+            left: -0.1rem;
+            top: 0.35rem;
+            width: 0.8rem;
+            height: 0.8rem;
+            border-radius: 999px;
+            background: var(--admin-accent);
+            box-shadow: 0 0 0 5px #ffffff;
+        }
+
+        .admin-activity-item.is-agreement::before {
+            background: var(--admin-info);
+        }
+
+        .admin-activity-item.is-enrollment::before {
+            background: #d39a19;
+        }
+
+        .admin-activity-time {
+            display: block;
+            margin-bottom: 0.3rem;
+            color: var(--admin-muted);
+            font-size: 0.94rem;
+            font-weight: 700;
+        }
+
+        .admin-activity-title {
+            display: block;
+            margin-bottom: 0.25rem;
+            font-size: 1.2rem;
+            font-weight: 800;
+            color: var(--admin-ink);
+        }
+
+        .admin-activity-text {
+            display: block;
+            color: #5e7491;
+            line-height: 1.55;
+        }
+
+        .admin-activity-empty {
+            padding: 1rem 1rem 1rem 2.2rem;
+            color: var(--admin-muted);
+            font-weight: 600;
+        }
+
+        .admin-history-link {
+            margin-top: 0.8rem;
+            border: 0;
+            background: transparent;
+            padding: 0;
+            color: var(--admin-accent-deep);
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        @media (max-width: 1399px) {
+            .admin-overview-top-grid {
+                grid-template-columns: minmax(0, 1.5fr) repeat(2, minmax(0, 1fr));
+            }
+
+            .admin-overview-main-grid {
+                grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.95fr);
+            }
+        }
+
+        @media (max-width: 1199px) {
+            .admin-overview-hero {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .admin-overview-top-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .admin-focus-card {
+                grid-column: 1 / -1;
+            }
+
+            .admin-overview-main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 767px) {
+            .admin-overview-top-grid,
+            .admin-action-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .admin-focus-card {
+                grid-template-columns: 1fr;
+                padding: 1.45rem;
+            }
+
+            .admin-focus-progress {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .admin-department-head {
+                grid-template-columns: auto 1fr;
+            }
+
+            .admin-status-pill {
+                grid-column: 1 / -1;
+                justify-self: flex-start;
+            }
+
+            .admin-summary-footer,
+            .admin-department-footer {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+</style>
+    <link rel="stylesheet" href="../assets/css/rserve-dashboard-theme.css">
 </head>
-<body>
+<body class="rserve-theme">
 
 <div id="rserve-page-loader" class="rserve-page-loader" aria-hidden="true">
     <div class="rserve-page-loader__inner">
@@ -735,45 +1584,75 @@ if ($advisers && $advisers->num_rows > 0) {
 </div>
 <div class="d-flex" id="wrapper">
     <div id="sidebar-wrapper">
-        <div class="sidebar-heading">
-            <i class="fas fa-user-shield me-2"></i> Administrator
-        </div>
-        <div class="list-group list-group-flush">
-            <a href="#" class="list-group-item list-group-item-action active" data-view="dashboard" onclick="showView('dashboard')">
-                <i class="fas fa-th-large"></i> Dashboard
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" data-view="departments" onclick="showView('departments')">
-                <i class="fas fa-university"></i> Departments
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" data-view="reports" onclick="showView('reports')">
-                <i class="fas fa-chart-bar"></i> Reports
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" data-view="advisory" onclick="showView('advisory')">
-                <i class="fas fa-chalkboard-teacher"></i> Advisory Management
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" data-view="users" onclick="showView('users')">
-                <i class="fas fa-users-cog"></i> User Management
-            </a>
-            <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" data-view="notifications" onclick="showView('notifications')">
-                <span><i class="fas fa-bell"></i> Notifications</span>
-                <?php if ($unread_notifs > 0): ?>
-                    <span class="badge bg-danger rounded-pill"><?php echo $unread_notifs; ?></span>
-                <?php endif; ?>
-            </a>
-            <a href="logout.php" class="list-group-item list-group-item-action mt-auto">
-                <i class="fas fa-sign-out-alt"></i> Logout
-            </a>
+        <div class="sidebar-shell">
+            <div class="sidebar-heading">
+                <span class="sidebar-brand-title">RServeS Portal</span>
+                <span class="sidebar-brand-subtitle">Administrator Console</span>
+            </div>
+            <div class="list-group list-group-flush">
+                <a href="#" class="list-group-item list-group-item-action active" data-view="dashboard" onclick="showView('dashboard'); return false;">
+                    <i class="fas fa-th-large"></i> Dashboard
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-view="departments" onclick="showView('departments'); return false;">
+                    <i class="fas fa-university"></i> Departments
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-view="reports" onclick="showView('reports'); return false;">
+                    <i class="fas fa-chart-bar"></i> Reports
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-view="advisory" onclick="showView('advisory'); return false;">
+                    <i class="fas fa-chalkboard-teacher"></i> Advisory Management
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-view="users" onclick="showView('users'); return false;">
+                    <i class="fas fa-users-cog"></i> User Management
+                </a>
+                <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" data-view="notifications" onclick="showView('notifications'); return false;">
+                    <span><i class="fas fa-bell"></i> Notifications</span>
+                    <?php if ($unread_notifs > 0): ?>
+                        <span class="badge bg-danger rounded-pill"><?php echo $unread_notifs; ?></span>
+                    <?php endif; ?>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-bs-toggle="modal" data-bs-target="#profileModal">
+                    <i class="fas fa-user-circle"></i> Profile
+                </a>
+                <a href="logout.php" class="list-group-item list-group-item-action">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </div>
+            <div class="role-sidebar-card">
+                <div class="sidebar-role-profile">
+                    <img src="<?php echo htmlspecialchars($admin_photo); ?>" alt="Profile" class="sidebar-role-avatar">
+                    <div>
+                        <div class="sidebar-role-name"><?php echo htmlspecialchars($admin_name); ?></div>
+                        <div class="sidebar-role-meta">System Administrator</div>
+                    </div>
+                </div>
+                <button type="button" class="sidebar-support-btn" data-bs-toggle="modal" data-bs-target="#profileModal">
+                    Profile Center
+                </button>
+            </div>
         </div>
     </div>
 
     <div id="page-content-wrapper">
-        <nav class="navbar navbar-expand-lg navbar-light d-none d-md-flex">
-            
-            <div class="ms-auto d-flex align-items-center">
-                <!-- Name and Role (Hidden on very small screens, visible on md+) -->
-                <!-- Profile Image (Always visible, acts as trigger for modal) -->
-                <div class="position-relative" style="cursor: pointer;" data-bs-toggle="modal" data-bs-target="#profileModal">
-                  
+        <nav class="navbar navbar-expand-lg">
+            <div class="topbar-shell">
+                <div class="topbar-tabs d-none d-lg-flex">
+                    <a href="#" class="topbar-tab active" data-view="dashboard" onclick="showView('dashboard'); return false;">Overview</a>
+                    <a href="#" class="topbar-tab" data-view="departments" onclick="showView('departments'); return false;">Departments</a>
+                    <a href="#" class="topbar-tab" data-view="reports" onclick="showView('reports'); return false;">Reports</a>
+                    <a href="#" class="topbar-tab" data-view="advisory" onclick="showView('advisory'); return false;">Advisory</a>
+                    <a href="#" class="topbar-tab" data-view="users" onclick="showView('users'); return false;">Users</a>
+                    <a href="#" class="topbar-tab" data-view="notifications" onclick="showView('notifications'); return false;">Notifications</a>
+                </div>
+
+                <div class="topbar-actions">
+                    <div class="topbar-profile" data-bs-toggle="modal" data-bs-target="#profileModal">
+                        <div class="topbar-identity">
+                            <div><?php echo htmlspecialchars($admin_name); ?></div>
+                            <div>Administrator</div>
+                        </div>
+                        <img src="<?php echo htmlspecialchars($admin_photo); ?>" alt="Profile" class="topbar-avatar">
+                    </div>
                 </div>
             </div>
         </nav>
@@ -798,36 +1677,206 @@ if ($advisers && $advisers->num_rows > 0) {
                 </div>
             <?php endif; ?>
             
-            <div id="dashboard-view">
-                <h2 class="mb-4">Dashboard Overview</h2>
-                <div class="row g-4 mb-4">
-                    <div class="col-md-4">
-                        <div class="stat-card">
-                            <div class="stat-icon"><i class="fas fa-building"></i></div>
-                            <h3><?php echo $totalDepartments; ?></h3>
-                            <p class="text-muted">Departments</p>
-                        </div>
+            <div id="dashboard-view" class="admin-overview">
+                <section class="admin-overview-hero">
+                    <div class="admin-overview-copy">
+                        <p class="admin-overview-kicker">Administrator Workspace</p>
+                        <h1 class="admin-overview-title">
+                            <span id="admin-greeting-label">Welcome back</span>, <?php echo htmlspecialchars($adminData['firstname'] ?? 'Admin'); ?>
+                        </h1>
+                        <p class="admin-overview-subtitle">
+                            <?php echo htmlspecialchars($dashboardStateText); ?>
+                            <?php if ($pendingApprovals > 0): ?>
+                                You have <strong><?php echo number_format($pendingApprovals); ?> pending approvals</strong> awaiting review.
+                            <?php else: ?>
+                                No pending approvals are waiting in the queue.
+                            <?php endif; ?>
+                        </p>
                     </div>
-                    <div class="col-md-4">
-                        <div class="stat-card">
-                            <div class="stat-icon"><i class="fas fa-user-graduate"></i></div>
-                            <h3><?php echo $totalStudents; ?></h3>
-                            <p class="text-muted">Students</p>
-                        </div>
+
+                    <div class="admin-state-badge <?php echo $dashboardState === 'attention' ? 'is-attention' : ($dashboardState === 'monitoring' ? 'is-monitoring' : ''); ?>">
+                        <span class="admin-state-dot"></span>
+                        <span><?php echo ucfirst($dashboardState); ?> Mode</span>
                     </div>
-                    <div class="col-md-4">
-                        <div class="stat-card">
-                            <div class="stat-icon"><i class="fas fa-chalkboard-teacher"></i></div>
-                            <h3><?php echo $totalInstructors; ?></h3>
-                            <p class="text-muted">Advisers</p>
+                </section>
+
+                <div class="admin-overview-top-grid">
+                    <article class="admin-card admin-focus-card">
+                        <div>
+                            <p class="admin-focus-kicker">Institutional Compliance</p>
+                            <h2 class="admin-focus-title">System Readiness</h2>
+                            <p class="admin-focus-text">
+                                Verified documents are holding at <?php echo $documentComplianceRate; ?>% while scholar readiness is at <?php echo $studentReadinessRate; ?>%.
+                                Approved service hours are pacing at <?php echo $hoursProgressRate; ?>% of the institutional target, and advisers are covering <?php echo $sectionCoverageRate; ?>% of active sections across the portal.
+                            </p>
+
+                            <div class="admin-focus-stats">
+                                <div class="admin-focus-chip">
+                                    <span class="admin-focus-chip-label">Pending approvals</span>
+                                    <span class="admin-focus-chip-value"><?php echo number_format($pendingApprovals); ?></span>
+                                </div>
+                                <div class="admin-focus-chip">
+                                    <span class="admin-focus-chip-label">Active advisers</span>
+                                    <span class="admin-focus-chip-value"><?php echo number_format($totalInstructors); ?></span>
+                                </div>
+                                <div class="admin-focus-chip">
+                                    <span class="admin-focus-chip-label">Approved hours</span>
+                                    <span class="admin-focus-chip-value"><?php echo number_format($totalApprovedHours); ?></span>
+                                </div>
+                            </div>
+
+                            <div class="admin-focus-progress">
+                                <div class="admin-focus-progress-copy"><?php echo $globalHealthScore; ?>% global score</div>
+                                <div class="admin-focus-progress-track">
+                                    <span style="width: <?php echo $globalHealthScore; ?>%;"></span>
+                                </div>
+                            </div>
                         </div>
-                    </div>
+
+                        <div class="admin-score-ring" style="--score: <?php echo $globalHealthScore; ?>;">
+                            <div class="admin-score-ring-value">
+                                <strong><?php echo $globalHealthScore; ?>%</strong>
+                                <span>Health score</span>
+                            </div>
+                        </div>
+                    </article>
+
+                    <article class="admin-card admin-summary-card">
+                        <div>
+                            <div class="admin-summary-icon"><i class="fas fa-university"></i></div>
+                            <span class="admin-summary-label">Departments</span>
+                            <p class="admin-summary-value"><?php echo number_format($totalDepartments); ?> Active</p>
+                        </div>
+                        <div class="admin-summary-footer">
+                            <span><strong><?php echo $departmentCoverageRate; ?>%</strong> with scholars</span>
+                            <span><strong><?php echo $assignedSections; ?>/<?php echo $totalSections; ?></strong> sections assigned</span>
+                        </div>
+                    </article>
+
+                    <article class="admin-card admin-summary-card">
+                        <div>
+                            <div class="admin-summary-icon"><i class="fas fa-user-graduate"></i></div>
+                            <span class="admin-summary-label">Total Scholars</span>
+                            <p class="admin-summary-value"><?php echo number_format($totalStudents); ?></p>
+                        </div>
+                        <div class="admin-summary-footer">
+                            <span><strong><?php echo number_format($totalCompletedStudents); ?></strong> completed</span>
+                            <span><strong><?php echo $studentReadinessRate; ?>%</strong> ready</span>
+                        </div>
+                    </article>
                 </div>
 
-                <div class="content-card">
-                    <h4 class="mb-3">Welcome</h4>
-                    <p class="mb-1"><i class="fas fa-envelope me-2"></i><?php echo htmlspecialchars($admin_email); ?></p>
-                    <p class="text-muted mb-0">Use the navigation to review departments, students, and advisers across the system.</p>
+                <div class="admin-overview-main-grid">
+                    <section>
+                        <div class="admin-section-header">
+                            <h2 class="admin-section-title">Departmental Performance</h2>
+                            <button type="button" class="admin-section-link" onclick="showView('reports')">View Detailed Metrics <i class="fas fa-arrow-right ms-1"></i></button>
+                        </div>
+
+                        <div class="admin-performance-list">
+                            <?php if (!empty($departmentPerformance)): ?>
+                                <?php foreach ($departmentPerformance as $metric): ?>
+                                    <article class="admin-card admin-department-card">
+                                        <div class="admin-department-head">
+                                            <div class="admin-department-icon">
+                                                <i class="fas <?php echo htmlspecialchars($metric['icon']); ?>"></i>
+                                            </div>
+
+                                            <div>
+                                                <h3 class="admin-department-name"><?php echo htmlspecialchars($metric['name']); ?></h3>
+                                                <p class="admin-department-meta">
+                                                    <?php echo number_format($metric['students']); ?> scholars |
+                                                    <?php echo number_format($metric['instructors']); ?> advisers |
+                                                    <?php echo number_format($metric['sections']); ?> sections
+                                                </p>
+                                            </div>
+
+                                            <span class="admin-status-pill is-<?php echo htmlspecialchars($metric['tone']); ?>">
+                                                <?php echo htmlspecialchars($metric['label']); ?>
+                                            </span>
+                                        </div>
+
+                                        <div class="admin-department-progress">
+                                            <span style="width: <?php echo $metric['score']; ?>%;"></span>
+                                        </div>
+
+                                        <div class="admin-department-footer">
+                                            <span><?php echo $metric['score']; ?>% performance score</span>
+                                            <span><?php echo $metric['ready_students']; ?> ready scholars</span>
+                                            <span><?php echo $metric['pending_approvals']; ?> pending approvals</span>
+                                            <span>Target: 95%</span>
+                                        </div>
+                                    </article>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <article class="admin-card admin-department-card">
+                                    <div class="admin-activity-empty">Department performance will appear once student records are available.</div>
+                                </article>
+                            <?php endif; ?>
+                        </div>
+                    </section>
+
+                    <aside class="admin-side-stack">
+                        <section class="admin-card admin-quick-card">
+                            <div class="admin-section-header">
+                                <h2 class="admin-section-title">Quick Management</h2>
+                            </div>
+
+                            <div class="admin-action-grid">
+                                <button type="button" class="admin-action-tile" onclick="showView('departments')">
+                                    <span class="admin-action-icon"><i class="fas fa-building"></i></span>
+                                    <span class="admin-action-label">Departments</span>
+                                </button>
+                                <button type="button" class="admin-action-tile" onclick="showView('reports')">
+                                    <span class="admin-action-icon"><i class="fas fa-chart-bar"></i></span>
+                                    <span class="admin-action-label">Reports</span>
+                                </button>
+                                <button type="button" class="admin-action-tile" onclick="showView('advisory')">
+                                    <span class="admin-action-icon"><i class="fas fa-user-cog"></i></span>
+                                    <span class="admin-action-label">Advisers</span>
+                                </button>
+                                <button type="button" class="admin-action-tile" onclick="showView('users')">
+                                    <span class="admin-action-icon"><i class="fas fa-user-plus"></i></span>
+                                    <span class="admin-action-label">User Setup</span>
+                                </button>
+                            </div>
+                        </section>
+
+                        <section class="admin-card admin-activity-card">
+                            <div class="admin-section-header">
+                                <h2 class="admin-section-title">Recent Activity</h2>
+                            </div>
+
+                            <div class="admin-activity-timeline">
+                                <?php if (!empty($recentActivity)): ?>
+                                    <?php foreach ($recentActivity as $activity): ?>
+                                        <?php
+                                            $activityType = $activity['type'] ?? 'waiver';
+                                            $activityTitle = ucfirst($activityType) . ' Submission';
+                                            if ($activityType === 'agreement') {
+                                                $activityTitle = 'Agreement Update';
+                                            } elseif ($activityType === 'enrollment') {
+                                                $activityTitle = 'Enrollment Review';
+                                            }
+                                        ?>
+                                        <button type="button"
+                                                class="admin-activity-item is-<?php echo htmlspecialchars($activityType); ?>"
+                                                onclick="openAdminNotification(<?php echo (int) $activity['id']; ?>)">
+                                            <span class="admin-activity-time"><?php echo htmlspecialchars(adminDashboardRelativeTime($activity['created_at'] ?? null)); ?></span>
+                                            <span class="admin-activity-title"><?php echo htmlspecialchars($activityTitle); ?></span>
+                                            <span class="admin-activity-text"><?php echo htmlspecialchars($activity['message']); ?></span>
+                                        </button>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <div class="admin-activity-empty">
+                                        Approval activity will appear here as students submit their records.
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+
+                            <button type="button" class="admin-history-link" onclick="showView('notifications')">View full history</button>
+                        </section>
+                    </aside>
                 </div>
             </div>
 
@@ -942,27 +1991,27 @@ if ($advisers && $advisers->num_rows > 0) {
     
     <!-- Nav Row -->
     <div class="mobile-header-nav">
-        <a href="#" class="nav-item active" data-view="dashboard" onclick="showView('dashboard')">
+        <a href="#" class="nav-item active" data-view="dashboard" onclick="showView('dashboard'); return false;">
             <i class="fas fa-th-large"></i>
             <span>Dashboard</span>
         </a>
-        <a href="#" class="nav-item" data-view="departments" onclick="showView('departments')">
+        <a href="#" class="nav-item" data-view="departments" onclick="showView('departments'); return false;">
             <i class="fas fa-university"></i>
             <span>Departments</span>
         </a>
-        <a href="#" class="nav-item" data-view="reports" onclick="showView('reports')">
+        <a href="#" class="nav-item" data-view="reports" onclick="showView('reports'); return false;">
             <i class="fas fa-chart-bar"></i>
             <span>Reports</span>
         </a>
-        <a href="#" class="nav-item" data-view="advisory" onclick="showView('advisory')">
+        <a href="#" class="nav-item" data-view="advisory" onclick="showView('advisory'); return false;">
             <i class="fas fa-chalkboard-teacher"></i>
             <span>Advisory</span>
         </a>
-        <a href="#" class="nav-item" data-view="users" onclick="showView('users')">
+        <a href="#" class="nav-item" data-view="users" onclick="showView('users'); return false;">
             <i class="fas fa-users-cog"></i>
             <span>Users</span>
         </a>
-        <a href="#" class="nav-item position-relative" data-view="notifications" onclick="showView('notifications')">
+        <a href="#" class="nav-item position-relative" data-view="notifications" onclick="showView('notifications'); return false;">
             <i class="fas fa-bell"></i>
             <span>Notifs</span>
             <?php if ($unread_notifs > 0): ?>
@@ -986,6 +2035,24 @@ if ($advisers && $advisers->num_rows > 0) {
     const adminNotifications = <?php echo json_encode($notifications); ?>;
 
     // Menu toggle logic removed as we use mobile nav on mobile and sidebar on desktop
+
+    function renderAdminGreeting() {
+        const greetingNode = document.getElementById('admin-greeting-label');
+        if (!greetingNode) return;
+
+        const currentHour = new Date().getHours();
+        let greeting = 'Welcome back';
+
+        if (currentHour < 12) {
+            greeting = 'Good Morning';
+        } else if (currentHour < 18) {
+            greeting = 'Good Afternoon';
+        } else {
+            greeting = 'Good Evening';
+        }
+
+        greetingNode.textContent = greeting;
+    }
 
     function showView(view) {
         // Update active class for both sidebar and mobile nav based on data-view
@@ -1304,6 +2371,77 @@ if ($advisers && $advisers->num_rows > 0) {
             options: { responsive: true, maintainAspectRatio: false }
         });
     }
+
+    function findAdminStudent(studentId) {
+        const departments = adminDepartments || {};
+
+        for (const deptId of Object.keys(departments)) {
+            const dept = departments[deptId];
+            const sections = dept.sections || {};
+
+            for (const sectionLabel of Object.keys(sections)) {
+                const students = sections[sectionLabel] || [];
+                const student = students.find((entry) => String(entry.stud_id) === String(studentId));
+
+                if (student) {
+                    return { deptId, section: sectionLabel, student };
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function getAdminStatusBadge(status) {
+        if (!status || status === 'None') {
+            return '<span class="badge bg-secondary opacity-50">Not Submitted</span>';
+        }
+
+        if (status === 'Verified') {
+            return '<span class="badge bg-success">Verified</span>';
+        }
+
+        if (status === 'Rejected') {
+            return '<span class="badge bg-danger">Rejected</span>';
+        }
+
+        return '<span class="badge bg-warning text-dark">Pending</span>';
+    }
+
+    function highlightNotificationTarget(selector) {
+        const target = document.querySelector(selector);
+        if (!target) return;
+
+        target.classList.add('border-primary', 'shadow-sm');
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        window.setTimeout(() => {
+            target.classList.remove('border-primary', 'shadow-sm');
+        }, 2200);
+    }
+
+    function openAdminNotification(notificationId) {
+        const notification = (adminNotifications || []).find((item) => String(item.id) === String(notificationId));
+        if (!notification) return;
+
+        const match = findAdminStudent(notification.student_id);
+        if (!match) {
+            showView('departments');
+            return;
+        }
+
+        if (notification.type === 'enrollment' && match.student && match.student.enrollment_id) {
+            window.location.href = 'verify_enrollment.php?id=' + encodeURIComponent(match.student.enrollment_id);
+            return;
+        }
+
+        showView('departments');
+        renderAdminSectionStudents(match.deptId, match.section);
+
+        window.requestAnimationFrame(() => {
+            highlightNotificationTarget(`[data-student-id="${notification.student_id}"]`);
+        });
+    }
     
     function renderNotifications() {
         const list = document.getElementById('notifications-list');
@@ -1314,15 +2452,28 @@ if ($advisers && $advisers->num_rows > 0) {
             return;
         }
         
-        list.innerHTML = adminNotifications.map(n => `
-            <div class="list-group-item list-group-item-action ${!n.is_read ? 'bg-light' : ''}">
-                <div class="d-flex w-100 justify-content-between">
-                    <h5 class="mb-1">${n.type.charAt(0).toUpperCase() + n.type.slice(1)} Notification</h5>
-                    <small class="text-muted">${new Date(n.created_at).toLocaleDateString()}</small>
-                </div>
-                <p class="mb-1">${n.message}</p>
-            </div>
-        `).join('');
+        list.innerHTML = adminNotifications.map(n => {
+            const icon = n.type === 'waiver'
+                ? 'fa-file-signature'
+                : (n.type === 'agreement' ? 'fa-file-contract' : 'fa-user-check');
+            const actionText = n.type === 'enrollment' ? 'Open enrollment review' : 'Open student record';
+
+            return `
+                <button type="button" class="list-group-item list-group-item-action ${!n.is_read ? 'bg-light' : ''} text-start" onclick="openAdminNotification(${n.id})">
+                    <div class="d-flex w-100 justify-content-between align-items-start gap-3">
+                        <div class="d-flex align-items-start gap-3">
+                            <span class="text-primary fs-5 mt-1"><i class="fas ${icon}"></i></span>
+                            <div>
+                                <h5 class="mb-1">${n.type.charAt(0).toUpperCase() + n.type.slice(1)} Notification</h5>
+                                <p class="mb-1">${n.message}</p>
+                                <small class="text-primary fw-semibold">${actionText}</small>
+                            </div>
+                        </div>
+                        <small class="text-muted text-nowrap">${new Date(n.created_at).toLocaleDateString()}</small>
+                    </div>
+                </button>
+            `;
+        }).join('');
     }
 
     // Certificate generation removed
@@ -1527,11 +2678,13 @@ if ($advisers && $advisers->num_rows > 0) {
             }
 
             rows +=
-                '<tr>' +
+                '<tr data-student-id="' + s.stud_id + '">' +
                     '<td>' +
                         '<div class="fw-semibold">' + s.name + '</div>' +
                         '<div class="small text-muted"><span class="me-2">' + s.email + '</span></div>' +
                     '</td>' +
+                    '<td>' + getAdminStatusBadge(s.waiver_status) + '</td>' +
+                    '<td>' + getAdminStatusBadge(s.agreement_status) + '</td>' +
                     '<td>' + enrollBadge + '</td>' +
                     '<td class="text-end">' +
                         '<span class="badge bg-light text-dark">' +
@@ -1550,6 +2703,8 @@ if ($advisers && $advisers->num_rows > 0) {
                             '<thead>' +
                                 '<tr>' +
                                     '<th>Student</th>' +
+                                    '<th>Waiver</th>' +
+                                    '<th>Agreement</th>' +
                                     '<th>Enrollment</th>' +
                                     '<th class="text-end">Actions</th>' +
                                 '</tr>' +
@@ -1637,6 +2792,8 @@ function togglePasswordVisibility(icon, fieldId) {
 }
 
 window.addEventListener('load', function() {
+    renderAdminGreeting();
+
     const loader = document.getElementById('rserve-page-loader');
     if (!loader) return;
     loader.classList.add('rserve-page-loader--hide');

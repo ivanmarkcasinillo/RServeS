@@ -1,11 +1,23 @@
 <?php
 session_start();
 
-// Clear session
+$_SESSION = [];
 session_unset();
+
+$cookieOptions = [
+    'expires' => time() - 3600,
+    'path' => '/',
+    'domain' => '',
+    'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+    'httponly' => true,
+    'samesite' => 'Lax'
+];
+
+setcookie(session_name(), '', $cookieOptions);
+setcookie('rserves_remember_email', '', $cookieOptions);
+
 session_destroy();
 
-// Redirect back to login page
 header("Location: ../home2.php");
 exit;
 ?>

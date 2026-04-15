@@ -1,6 +1,7 @@
 <?php
 session_start();
 require "../dbconnect.php";
+require_once __DIR__ . "/../../send_email.php";
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Student') {
     header("Location: ../../home2.php");
@@ -8,6 +9,12 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Student') {
 }
 
 $student_id = $_SESSION['stud_id'];
+$student_stmt = $conn->prepare("SELECT firstname, lastname, student_number, department_id FROM students WHERE stud_id = ? LIMIT 1");
+$student_stmt->bind_param("i", $student_id);
+$student_stmt->execute();
+$student = $student_stmt->get_result()->fetch_assoc() ?: [];
+$student_stmt->close();
+$student_name = trim(((string) ($student['firstname'] ?? '')) . ' ' . ((string) ($student['lastname'] ?? '')));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['waiver_file'])) {
     $file = $_FILES['waiver_file'];
@@ -55,6 +62,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['waiver_file'])) {
                 }
                 
                 if ($stmt->execute()) {
+                    $recipients = array_merge(
+                        rserves_fetch_admin_email_recipients($conn),
+                        rserves_fetch_coordinator_email_recipients($conn, intval($student['department_id'] ?? 0))
+                    );
+                    $body = rserves_notification_build_body(
+                        'there',
+                        "{$student_name} submitted a waiver for verification.",
+                        [
+                            'Student ID' => (string) ($student['student_number'] ?? 'N/A'),
+                            'Submitted File' => $newName,
+                        ]
+                    );
+                    rserves_send_bulk_notification_email($recipients, 'New Waiver Submission', $body);
                     $_SESSION['flash'] = "✅ Waiver submitted successfully!";
                 } else {
                     $_SESSION['flash'] = "❌ Database error: " . $conn->error;

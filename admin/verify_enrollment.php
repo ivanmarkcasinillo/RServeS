@@ -1,6 +1,7 @@
 <?php
 session_start();
 include "dbconnect.php";
+require_once __DIR__ . "/../send_email.php";
 
 // Only allow Administrator
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Administrator') {
@@ -39,6 +40,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->bind_param("sii", $status, $_SESSION['adm_id'], $enrollment_id);
         
         if ($stmt->execute()) {
+            $notify_stmt = $conn->prepare("
+                SELECT s.stud_id
+                FROM rss_enrollments e
+                INNER JOIN students s ON e.student_id = s.stud_id
+                WHERE e.enrollment_id = ?
+                LIMIT 1
+            ");
+            if ($notify_stmt) {
+                $notify_stmt->bind_param("i", $enrollment_id);
+                $notify_stmt->execute();
+                $notify_row = $notify_stmt->get_result()->fetch_assoc();
+                $notify_stmt->close();
+
+                if (!empty($notify_row['stud_id'])) {
+                    $student = rserves_fetch_student_email_recipient($conn, intval($notify_row['stud_id']));
+                    if ($student) {
+                        $body = rserves_notification_build_body(
+                            rserves_notification_recipient_name($student),
+                            "Your enrollment form was {$status}.",
+                            [
+                                'Document' => 'Enrollment Form',
+                                'Status' => $status,
+                            ]
+                        );
+                        rserves_send_bulk_notification_email([$student], "Enrollment Form {$status}", $body);
+                    }
+                }
+            }
+
             $_SESSION['flash'] = "Enrollment marked as $status.";
             header("Location: admin_dashboard.php");
             exit;

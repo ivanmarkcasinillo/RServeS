@@ -370,8 +370,9 @@ body {
 }
 
 </style>
+<link rel="stylesheet" href="../assets/css/rserve-dashboard-theme.css">
 </head>
-<body>
+<body class="rserve-theme">
 
 <div id="rserve-page-loader" class="rserve-page-loader" aria-hidden="true">
     <div class="rserve-page-loader__inner">
@@ -395,9 +396,13 @@ body {
         </div>
     </div>
     <div class="mobile-header-nav">
-        <a href="coordinator_dashboard.php" class="nav-item active">
-            <i class="fas fa-home"></i>
-            <span>Home</span>
+        <a href="#dashboard-overview" class="nav-item active">
+            <i class="fas fa-th-large"></i>
+            <span>Overview</span>
+        </a>
+        <a href="#students-panel" class="nav-item">
+            <i class="fas fa-users"></i>
+            <span>Students</span>
         </a>
         <a href="logout.php" class="nav-item">
             <i class="fas fa-sign-out-alt"></i>
@@ -405,71 +410,132 @@ body {
         </a>
     </div>
 </div>
-<nav class="navbar p-2">
-  <div class="container-fluid d-flex justify-content-between align-items-center">
-    <span class="navbar-text text-white fs-4 fw-bold">RSS Coordinator Dashboard</span>
-    <div class="d-none d-md-flex align-items-center" style="cursor: pointer;" data-bs-toggle="modal" data-bs-target="#profileModal">
-         <span class="text-white me-2 fw-bold">Coordinator</span>
-         <img src="<?= htmlspecialchars($coord_photo) ?>?v=<?=time()?>" alt="Profile" class="rounded-circle border border-2 border-white" style="width: 40px; height: 40px; object-fit: cover;">
+<div class="d-flex" id="wrapper">
+  <div id="sidebar-wrapper">
+    <div class="sidebar-shell">
+      <div class="sidebar-heading">
+        <span class="sidebar-brand-title">RServeS Portal</span>
+        <span class="sidebar-brand-subtitle">Coordinator Workspace</span>
+      </div>
+      <div class="list-group list-group-flush">
+        <a href="#dashboard-overview" class="list-group-item list-group-item-action active">
+          <i class="fas fa-th-large"></i> Overview
+        </a>
+        <a href="#students-panel" class="list-group-item list-group-item-action">
+          <i class="fas fa-users"></i> Students
+        </a>
+        <a href="#" class="list-group-item list-group-item-action" data-bs-toggle="modal" data-bs-target="#profileModal">
+          <i class="fas fa-user-circle"></i> Profile
+        </a>
+        <a href="logout.php" class="list-group-item list-group-item-action">
+          <i class="fas fa-sign-out-alt"></i> Logout
+        </a>
+      </div>
+      <div class="role-sidebar-card">
+        <div class="sidebar-role-profile">
+          <img src="<?= htmlspecialchars($coord_photo) ?>?v=<?= time() ?>" alt="Profile" class="sidebar-role-avatar">
+          <div>
+            <div class="sidebar-role-name"><?= htmlspecialchars($coord_name) ?></div>
+            <div class="sidebar-role-meta">Coordinator | College of Education</div>
+          </div>
+        </div>
+        <button type="button" class="sidebar-support-btn" data-bs-toggle="modal" data-bs-target="#profileModal">
+          Profile Center
+        </button>
+      </div>
     </div>
   </div>
-</nav>
 
-<div class="container my-4">
-  <?php if (isset($_GET['msg'])): ?>
-    <div class="alert alert-info alert-dismissible fade show mb-4" role="alert">
-      <?php echo htmlspecialchars($_GET['msg']); ?>
-      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    </div>
-  <?php endif; ?>
-  <div class="card p-3 mb-4">
-    <h3>Enrolled RSS Students</h3>
-    <div class="table-responsive">
-      <table class="table table-hover align-middle">
-        <thead class="table-primary">
-          <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Department</th>
-            <th>Waiver Status</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php
-          if ($result->num_rows > 0):
-              while ($s = $result->fetch_assoc()):
-                  $status = $s['waiver_status'] ?: 'Pending';
-                  $badge = $status === 'Verified' ? 'success' : ($status === 'Rejected' ? 'danger' : 'warning');
+  <div id="page-content-wrapper">
+    <nav class="navbar navbar-expand-lg">
+      <div class="topbar-shell">
+        <div class="topbar-tabs d-none d-lg-flex">
+          <a href="#dashboard-overview" class="topbar-tab active">Overview</a>
+          <a href="#students-panel" class="topbar-tab">Students</a>
+        </div>
 
-                  $middleInitial = trim($s['mi']);
-                  $fullName = $s['lastname'] . ', ' . $s['firstname'] . ($middleInitial ? ' ' . $middleInitial : '');
-          ?>
-          <tr>
-            <td><?= htmlspecialchars($fullName) ?></td>
-            <td><?= htmlspecialchars($s['email']) ?></td>
-            <td><?= htmlspecialchars($s['department']) ?></td>
-            <td><span class="badge bg-<?= $badge ?>"><?= htmlspecialchars($status) ?></span></td>
-            <td>
-              <?php if ($s['waiver_file']): ?>
-                <a href="<?= htmlspecialchars($s['waiver_file']) ?>" target="_blank" class="btn btn-sm btn-accent">View</a>
-              <?php else: ?>
-                <span class="text-muted">No File</span>
-              <?php endif; ?>
-            </td>
-          </tr>
-          <?php
-              endwhile;
-          else:
-          ?>
-          <tr><td colspan="5" class="text-center">No records found.</td></tr>
-          <?php
-          endif;
-          $result->free();
-          $conn->close();
-          ?>
-        </tbody>
-      </table>
+        <div class="topbar-actions">
+          <div class="topbar-profile" data-bs-toggle="modal" data-bs-target="#profileModal">
+            <div class="topbar-identity">
+              <div><?= htmlspecialchars($coord_name) ?></div>
+              <div>Coordinator | College of Education</div>
+            </div>
+            <img src="<?= htmlspecialchars($coord_photo) ?>?v=<?= time() ?>" alt="Profile" class="topbar-avatar">
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container-fluid py-4">
+      <?php if (isset($_GET['msg'])): ?>
+        <div class="alert alert-info alert-dismissible fade show mb-4" role="alert">
+          <?php echo htmlspecialchars($_GET['msg']); ?>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <?php endif; ?>
+      <?php if (!empty($uploadError)): ?>
+        <div class="alert alert-danger alert-dismissible fade show mb-4" role="alert">
+          <?php echo htmlspecialchars($uploadError); ?>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      <?php endif; ?>
+
+      <div class="content-card mb-4" id="dashboard-overview">
+        <h3 class="mb-2">Coordinator Dashboard</h3>
+        <p class="mb-1"><i class="fas fa-envelope me-2"></i><?= htmlspecialchars($email) ?></p>
+        <p class="text-muted mb-0">Review submitted coordinator requirements and keep College of Education student records moving.</p>
+      </div>
+
+      <div class="card p-3 mb-4" id="students-panel">
+        <h3>Enrolled RSS Students</h3>
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead class="table-primary">
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Department</th>
+                <th>Waiver Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php
+              if ($result->num_rows > 0):
+                  while ($s = $result->fetch_assoc()):
+                      $status = $s['waiver_status'] ?: 'Pending';
+                      $badge = $status === 'Verified' ? 'success' : ($status === 'Rejected' ? 'danger' : 'warning');
+
+                      $middleInitial = trim($s['mi']);
+                      $fullName = $s['lastname'] . ', ' . $s['firstname'] . ($middleInitial ? ' ' . $middleInitial : '');
+              ?>
+              <tr>
+                <td><?= htmlspecialchars($fullName) ?></td>
+                <td><?= htmlspecialchars($s['email']) ?></td>
+                <td><?= htmlspecialchars($s['department']) ?></td>
+                <td><span class="badge bg-<?= $badge ?>"><?= htmlspecialchars($status) ?></span></td>
+                <td>
+                  <?php if ($s['waiver_file']): ?>
+                    <a href="<?= htmlspecialchars($s['waiver_file']) ?>" target="_blank" class="btn btn-sm btn-accent">View</a>
+                  <?php else: ?>
+                    <span class="text-muted">No File</span>
+                  <?php endif; ?>
+                </td>
+              </tr>
+              <?php
+                  endwhile;
+              else:
+              ?>
+              <tr><td colspan="5" class="text-center">No records found.</td></tr>
+              <?php
+              endif;
+              $result->free();
+              $conn->close();
+              ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 </div>

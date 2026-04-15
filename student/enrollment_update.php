@@ -1,6 +1,8 @@
 <?php
 session_start();
 require "dbconnect.php";
+require_once __DIR__ . '/enrollment_form_config.php';
+require_once __DIR__ . '/../send_email.php';
 
 // Check if student is logged in
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Student') {
@@ -14,7 +16,7 @@ if (!$student_id) {
 }
 
 // Get student info
-$stmt = $conn->prepare("SELECT firstname, lastname, email, department_id FROM students WHERE stud_id = ?");
+$stmt = $conn->prepare("SELECT firstname, lastname, email, department_id, student_number FROM students WHERE stud_id = ?");
 $stmt->bind_param("i", $student_id);
 $stmt->execute();
 $student = $stmt->get_result()->fetch_assoc();
@@ -26,6 +28,33 @@ $check->bind_param("i", $student_id);
 $check->execute();
 $existing = $check->get_result()->fetch_assoc();
 $check->close();
+
+if (!function_exists('rserves_send_enrollment_submission_notification')) {
+    function rserves_send_enrollment_submission_notification(mysqli $conn, array $student, int $adviser_id, int $year_level, string $section, string $course): void
+    {
+        $student_name = trim(((string) ($student['firstname'] ?? '')) . ' ' . ((string) ($student['lastname'] ?? '')));
+        $recipients = rserves_fetch_admin_email_recipients($conn);
+
+        if ($adviser_id > 0) {
+            $adviser = rserves_fetch_instructor_email_recipient($conn, $adviser_id);
+            if ($adviser) {
+                $recipients[] = $adviser;
+            }
+        }
+
+        $body = rserves_notification_build_body(
+            'there',
+            "{$student_name} submitted an enrollment form for review.",
+            [
+                'Student ID' => (string) ($student['student_number'] ?? 'N/A'),
+                'Course' => $course,
+                'Year / Section' => trim($year_level . ' - ' . $section, ' -'),
+            ]
+        );
+
+        rserves_send_bulk_notification_email($recipients, 'New Enrollment Submission', $body);
+    }
+}
 
 $is_edit_mode = !empty($existing);
 $enrollment_data = $existing ?: [];
@@ -58,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $given_name = $_POST['given_name'] ?? '';
     $middle_name = $_POST['middle_name'] ?? '';
     $student_number = $_POST['student_number'] ?? '';
-    $college_values = isset($_POST['college']) ? implode(',', $_POST['college']) : '';
+    $college_values = normalizeEnrollmentCollege($_POST['college'] ?? '', $enrollment_college_aliases);
     $course = $_POST['course'] ?? '';
     $major = $_POST['major'] ?? '';
     $year_level = intval($_POST['year_level'] ?? 1);
@@ -297,6 +326,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $_SESSION['flash'] = "✅ Enrollment submitted! Waiting for Adviser Approval.";
             
+            rserves_send_enrollment_submission_notification($conn, $student, intval($adviser_id), intval($year_level), (string) $section, (string) $course);
+
             // Redirect to dashboard
             $departments = [
                 1 => "College of Education",
@@ -489,6 +520,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $prog->execute();
             $prog->close();
             
+            rserves_send_enrollment_submission_notification($conn, $student, intval($adviser_id), intval($year_level), (string) $section, (string) $course);
+
             $_SESSION['enrollment_id'] = $enrollment_id;
             $_SESSION['flash'] = "✅ Enrollment submitted! Waiting for Adviser Approval.";
             header("Location: pending_requirements.php");
@@ -498,6 +531,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     $stmt->close();
+}
+
+$form_source = $_SERVER['REQUEST_METHOD'] === 'POST' ? $_POST : $enrollment_data;
+$selected_college = normalizeEnrollmentCollege($form_source['college'] ?? ($enrollment_data['college'] ?? ''), $enrollment_college_aliases);
+$selected_course = trim((string) ($form_source['course'] ?? ($enrollment_data['course'] ?? '')));
+$selected_major = trim((string) ($form_source['major'] ?? ($enrollment_data['major'] ?? '')));
+$selected_marital_status = trim((string) ($form_source['marital_status'] ?? ($enrollment_data['marital_status'] ?? '')));
+
+$available_courses = ($selected_college !== '' && isset($enrollment_program_catalog[$selected_college]))
+    ? array_keys($enrollment_program_catalog[$selected_college])
+    : [];
+if ($selected_course !== '' && !in_array($selected_course, $available_courses, true)) {
+    $available_courses[] = $selected_course;
+}
+
+$available_majors = ($selected_college !== '' && $selected_course !== '' && isset($enrollment_program_catalog[$selected_college][$selected_course]))
+    ? $enrollment_program_catalog[$selected_college][$selected_course]
+    : [];
+if ($selected_major !== '' && !in_array($selected_major, $available_majors, true)) {
+    $available_majors[] = $selected_major;
 }
 
 // Helper function to get value
@@ -519,115 +572,498 @@ function isChecked($data, $key, $value) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= $is_edit_mode ? 'Edit' : 'New' ?> RSS Enrollment Form</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --primary-color: #1a4f7a;
-            --secondary-color: #123755;
-            --accent-color: #3a8ebd;
-            --bg-color: #f4f7f6;
-            --text-dark: #2c3e50;
+            --navy-950: #082746;
+            --navy-900: #0d355f;
+            --navy-800: #174d84;
+            --navy-700: #28629d;
+            --sky-500: #46b2ff;
+            --ink-900: #0f1728;
+            --ink-700: #47556c;
+            --ink-500: #748298;
+            --border-soft: rgba(15, 23, 40, 0.1);
+            --surface: rgba(255, 255, 255, 0.96);
+            --shadow-soft: 0 26px 70px rgba(10, 33, 60, 0.12);
+            --shadow-button: 0 18px 34px rgba(13, 53, 95, 0.22);
         }
-        
-        body { 
-            font-family: 'Urbanist', sans-serif;
-            background: var(--bg-color);
-            color: var(--text-dark);
-            padding: 20px; 
+
+        * {
+            box-sizing: border-box;
         }
-        
-        .form-container { 
-            background: white; 
-            border-radius: 15px; 
-            padding: 30px; 
-            max-width: 1200px; 
-            margin: 0 auto; 
-            box-shadow: 0 15px 35px rgba(26, 79, 122, 0.1); 
-            border: 1px solid rgba(255, 255, 255, 0.5);
+
+        body {
+            margin: 0;
+            font-family: 'Manrope', sans-serif;
+            color: var(--ink-900);
+            background: radial-gradient(circle at top left, rgba(34, 96, 160, 0.1), transparent 28%),
+                        linear-gradient(180deg, #edf2f8 0%, #f7f8fb 100%);
+            min-height: 100vh;
+            animation: pageFadeIn 0.45s ease forwards;
         }
-        
-        .section-title { 
-            background: linear-gradient(90deg, var(--secondary-color), var(--primary-color));
-            color: white; 
-            padding: 12px 20px; 
-            border-radius: 8px; 
-            margin: 25px 0 20px 0; 
-            font-weight: 600; 
-            letter-spacing: 0.5px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: url('../img/bg.jpg') center center / cover no-repeat;
+            opacity: 0.14;
+            transform: scale(1.03);
+            z-index: -2;
         }
-        
-        .photo-preview { 
-            max-width: 150px; 
-            max-height: 180px; 
-            border: 2px solid var(--primary-color); 
-            border-radius: 8px; 
-            margin-top: 10px; 
-            padding: 3px;
+
+        body::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(237, 242, 248, 0.94) 0%, rgba(247, 248, 251, 0.98) 100%);
+            z-index: -1;
         }
-        
-        .signature-pad { 
-            border: 2px solid var(--primary-color); 
-            border-radius: 8px; 
-            cursor: crosshair; 
-            background: white; 
+
+        .page-shell {
+            width: min(1380px, 100%);
+            margin: 0 auto;
+            padding: 32px 24px 48px;
         }
-        
-        .btn-custom { 
-            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); 
-            color: white; 
-            border: none; 
-            padding: 12px 30px;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            transition: all 0.3s ease;
+
+        .form-hero {
+            position: relative;
+            overflow: hidden;
+            border-radius: 30px;
+            padding: 32px 36px;
+            margin-bottom: 24px;
+            color: #fff;
+            background: linear-gradient(180deg, rgba(6, 35, 66, 0.34) 0%, rgba(6, 35, 66, 0.78) 100%),
+                        linear-gradient(140deg, rgba(8, 39, 70, 0.94) 0%, rgba(16, 76, 133, 0.84) 100%),
+                        url('../img/bg.jpg') center center / cover no-repeat;
+            box-shadow: var(--shadow-soft);
         }
-        
-        .btn-custom:hover { 
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(26, 79, 122, 0.3);
-            color: white;
+
+        .form-hero::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at top right, rgba(120, 183, 255, 0.2), transparent 32%),
+                        radial-gradient(circle at bottom left, rgba(120, 183, 255, 0.12), transparent 34%);
         }
-        
-        .edit-badge { 
-            background: var(--accent-color); 
-            color: white; 
-            padding: 5px 15px; 
-            border-radius: 20px; 
-            font-size: 14px; 
-            font-weight: 600;
+
+        .form-hero > * {
+            position: relative;
+            z-index: 1;
         }
-        
-        .form-control:focus, .form-select:focus {
-            border-color: var(--accent-color);
-            box-shadow: 0 0 0 0.25rem rgba(58, 142, 189, 0.25);
+
+        .hero-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.95rem;
         }
-        
-        h2, h3 {
-            color: var(--secondary-color);
+
+        .hero-brand-logo {
+            width: 62px;
+            height: 62px;
+            object-fit: contain;
+            padding: 0.55rem;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        }
+
+        .hero-brand-copy strong {
+            display: block;
+            font-family: 'Sora', sans-serif;
+            font-size: 1.65rem;
             font-weight: 700;
+            letter-spacing: -0.05em;
+        }
+
+        .hero-brand-copy span {
+            display: inline-flex;
+            width: 62px;
+            height: 4px;
+            margin-top: 0.35rem;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #2aa3ff 0%, #75c0ff 100%);
+        }
+
+        .hero-copy {
+            max-width: 820px;
+            margin-top: 2rem;
+        }
+
+        .hero-copy h1 {
+            margin: 0 0 1rem;
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(2.5rem, 4.8vw, 4.35rem);
+            line-height: 0.94;
+            letter-spacing: -0.08em;
+            font-weight: 800;
+            text-wrap: balance;
+        }
+
+        .hero-copy p {
+            margin: 0;
+            max-width: 640px;
+            color: rgba(222, 235, 255, 0.82);
+            font-size: 1.05rem;
+            line-height: 1.8;
+        }
+
+        .hero-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.85rem;
+            margin-top: 1.6rem;
+        }
+
+        .hero-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.7rem;
+            padding: 0.88rem 1rem;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+
+        .hero-pill i {
+            color: #8fd1ff;
+        }
+
+        .form-container {
+            position: relative;
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.72);
+            border-radius: 30px;
+            padding: 32px;
+            box-shadow: var(--shadow-soft);
+            backdrop-filter: blur(12px);
+        }
+
+        .form-container::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 6px;
+            border-radius: 30px 30px 0 0;
+            background: linear-gradient(90deg, #1f7be0 0%, #46b2ff 48%, #7bcfff 100%);
+        }
+
+        .form-intro {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 1.25rem;
+            margin-bottom: 1.9rem;
+        }
+
+        .form-intro h2 {
+            margin: 0 0 0.75rem;
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(2rem, 3vw, 2.7rem);
+            line-height: 1;
+            letter-spacing: -0.06em;
+            font-weight: 700;
+            color: var(--navy-900);
+        }
+
+        .form-intro p {
+            margin: 0;
+            max-width: 640px;
+            color: var(--ink-700);
+            font-size: 1rem;
+            line-height: 1.7;
+        }
+
+        .edit-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            padding: 0.78rem 0.95rem;
+            border-radius: 16px;
+            background: #edf4fb;
+            color: var(--navy-900);
+            font-size: 0.92rem;
+            font-weight: 800;
+        }
+
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin: 2rem 0 1.1rem;
+            padding: 0.95rem 1.1rem;
+            border-radius: 18px;
+            background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-700) 100%);
+            color: #fff;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            box-shadow: 0 18px 40px rgba(13, 53, 95, 0.18);
+        }
+
+        .section-title i {
+            width: 34px;
+            height: 34px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        .form-label {
+            margin-bottom: 0.55rem;
+            color: var(--ink-900);
+            font-size: 0.95rem;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+
+        .form-control,
+        .form-select {
+            min-height: 56px;
+            padding: 0.9rem 1rem;
+            border-radius: 18px;
+            border: 1px solid var(--border-soft);
+            background: #fff;
+            color: var(--ink-900);
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }
+
+        textarea.form-control {
+            min-height: auto;
+            padding-top: 0.95rem;
+            padding-bottom: 0.95rem;
+        }
+
+        .form-control::placeholder {
+            color: #8d99ad;
+        }
+
+        .form-control:hover,
+        .form-select:hover {
+            transform: translateY(-1px);
+        }
+
+        .form-control:focus,
+        .form-select:focus {
+            outline: none;
+            border-color: rgba(23, 77, 132, 0.45);
+            box-shadow: 0 0 0 4px rgba(39, 99, 168, 0.12);
+        }
+
+        .form-select:disabled {
+            background: #f5f7fb;
+            color: var(--ink-500);
+            cursor: not-allowed;
+        }
+
+        .field-hint {
+            margin-top: 0.45rem;
+            color: var(--ink-500);
+            font-size: 0.83rem;
+            line-height: 1.55;
+        }
+
+        .form-check-label {
+            color: var(--ink-700);
+            font-weight: 600;
+        }
+
+        .form-check-input {
+            margin-top: 0.22rem;
+        }
+
+        .form-check-input:checked {
+            background-color: var(--navy-700);
+            border-color: var(--navy-700);
+        }
+
+        h6 {
+            margin-top: 1.4rem;
+            color: var(--navy-900);
+            font-weight: 700;
+        }
+
+        .photo-preview {
+            max-width: 140px;
+            margin-top: 0.85rem;
+            border-radius: 20px;
+            border: 1px solid rgba(23, 77, 132, 0.16);
+            padding: 0.35rem;
+            background: #fff;
+            box-shadow: 0 14px 28px rgba(10, 33, 60, 0.1);
+        }
+
+        .signature-panel {
+            padding: 1rem;
+            border-radius: 22px;
+            background: #f7fbff;
+            border: 1px solid rgba(23, 77, 132, 0.1);
+        }
+
+        .signature-pad {
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            border: 1px dashed rgba(23, 77, 132, 0.3);
+            border-radius: 20px;
+            background: #fff;
+            cursor: crosshair;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        }
+
+        .btn {
+            border-radius: 18px;
+            font-weight: 700;
+        }
+
+        .btn-custom {
+            min-height: 58px;
+            padding: 0.95rem 1.6rem;
+            border: 0;
+            background: linear-gradient(135deg, var(--navy-900) 0%, var(--navy-700) 100%);
+            color: #fff;
+            box-shadow: var(--shadow-button);
+            transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+        }
+
+        .btn-custom:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 20px 36px rgba(13, 53, 95, 0.28);
+            filter: brightness(1.02);
+            color: #fff;
+        }
+
+        .btn-secondary,
+        .btn-info {
+            min-height: 46px;
+            padding: 0.85rem 1.2rem;
+            border: 1px solid rgba(23, 77, 132, 0.16);
+            background: #f5f8fc;
+            color: var(--navy-900);
+            transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+        }
+
+        .btn-secondary:hover,
+        .btn-info:hover {
+            transform: translateY(-1px);
+            border-color: rgba(23, 77, 132, 0.28);
+            background: #edf4fb;
+            color: var(--navy-900);
+        }
+
+        .alert {
+            border: 0;
+            border-radius: 18px;
+            padding: 1rem 1.1rem;
+        }
+
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.85rem;
+            flex-wrap: wrap;
+            margin-top: 2rem;
+        }
+
+        @keyframes pageFadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        @media (max-width: 991.98px) {
+            .page-shell {
+                padding: 20px 16px 32px;
+            }
+
+            .form-hero,
+            .form-container {
+                border-radius: 24px;
+            }
+
+            .form-hero {
+                padding: 28px 24px;
+            }
+
+            .form-container {
+                padding: 24px 20px;
+            }
+
+            .form-intro {
+                flex-direction: column;
+            }
+        }
+
+        @media (max-width: 767.98px) {
+            .hero-copy h1 {
+                font-size: 2.7rem;
+            }
+
+            .hero-meta,
+            .form-actions {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .btn-custom,
+            .btn-secondary {
+                width: 100%;
+            }
         }
     </style>
 </head>
 <body>
-<div class="form-container">
-    <div class="text-center mb-4">
-        <h3 style="color: var(--primary-color);">Lapu-Lapu City College</h3>
-        <p class="mb-0">Don B. Benedicto Rd., Gun-ob, Lapu-Lapu City, 6015</p>
-        <p><em>School Code: 7174</em></p>
-        <?php if ($is_edit_mode): ?>
-            <span class="edit-badge">EDITING MODE</span>
+<div class="page-shell">
+    <section class="form-hero">
+        <div class="hero-brand">
+            <img src="../img/logo3.png" alt="RServeS logo" class="hero-brand-logo">
+            <div class="hero-brand-copy">
+                <strong>RServeS</strong>
+                <span></span>
+            </div>
+        </div>
+
+        <div class="hero-copy">
+            <h1>Update your enrollment details with the same modern student form.</h1>
+            <p>Refresh personal information, academic details, and signature data without losing the current enrollment record already saved in your account.</p>
+        </div>
+
+        <div class="hero-meta">
+            <span class="hero-pill"><i class="fas fa-pen"></i><?= $is_edit_mode ? 'Editing existing enrollment' : 'Creating enrollment record' ?></span>
+            <span class="hero-pill"><i class="fas fa-school"></i>Lapu-Lapu City College</span>
+            <span class="hero-pill"><i class="fas fa-id-card"></i>School Code: 7174</span>
+        </div>
+    </section>
+
+    <div class="form-container">
+        <div class="form-intro">
+            <div>
+                <h2>Return Service System Enrollment Form</h2>
+                <p>Review the stored information below and update only what needs to change. College, course, and specialization selections stay aligned with the latest academic offerings.</p>
+            </div>
+            <?php if ($is_edit_mode): ?>
+                <span class="edit-chip"><i class="fas fa-pen-to-square"></i>Editing mode</span>
+            <?php endif; ?>
+        </div>
+
+        <?php if (isset($error)): ?>
+            <div class="alert alert-danger"><?= $error ?></div>
         <?php endif; ?>
-    </div>
-    
-    <h2 class="text-center mb-4" style="color: var(--secondary-color);">RETURN SERVICE SYSTEM (RSS)<br>Enrollment Form</h2>
-    
-    <?php if (isset($error)): ?>
-        <div class="alert alert-danger"><?= $error ?></div>
-    <?php endif; ?>
-    
-    <form method="POST" enctype="multipart/form-data" id="enrollmentForm">
+
+        <form method="POST" enctype="multipart/form-data" id="enrollmentForm">
         
         <!-- A. PERSONAL DATA -->
         <div class="section-title">A. PERSONAL DATA</div>
@@ -655,35 +1091,61 @@ function isChecked($data, $key, $value) {
                 <label class="form-label">Upload Photo <?= $is_edit_mode ? '(Leave empty to keep current)' : '*' ?></label>
                 <input type="file" class="form-control" name="photo" accept="image/*" <?= $is_edit_mode ? '' : 'required' ?>>
                 <?php if ($is_edit_mode && !empty($enrollment_data['photo_path'])): ?>
+                    <img src="<?= htmlspecialchars($enrollment_data['photo_path']) ?>" alt="Current student photo" class="photo-preview">
                 <?php endif; ?>
             </div>
         </div>
         
-        <div class="mb-3">
-            <label class="form-label">College *</label><br>
-            <div class="form-check form-check-inline">
-                <input class="form-check-input" type="checkbox" name="college[]" value="COED" id="coed" <?= isChecked($enrollment_data, 'college', 'COED') ? 'checked' : '' ?>>
-                <label class="form-check-label" for="coed">COED</label>
+        <div class="row mb-3">
+            <div class="col-lg-4">
+                <label class="form-label">College *</label>
+                <select class="form-select" name="college" id="collegeSelect" required>
+                    <option value="">Select college</option>
+                    <?php foreach (array_keys($enrollment_program_catalog) as $college_option): ?>
+                        <option value="<?= htmlspecialchars($college_option) ?>" <?= $selected_college === $college_option ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($college_option) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </div>
-            <div class="form-check form-check-inline">
-                <input class="form-check-input" type="checkbox" name="college[]" value="COT" id="cot" <?= isChecked($enrollment_data, 'college', 'COT') ? 'checked' : '' ?>>
-                <label class="form-check-label" for="cot">COT</label>
+            <div class="col-lg-4">
+                <label class="form-label">Course *</label>
+                <select class="form-select" name="course" id="courseSelect" data-selected="<?= htmlspecialchars($selected_course) ?>" required <?= empty($available_courses) ? 'disabled' : '' ?>>
+                    <option value=""><?= $selected_college !== '' ? 'Select course' : 'Select college first' ?></option>
+                    <?php foreach ($available_courses as $course_option): ?>
+                        <option value="<?= htmlspecialchars($course_option) ?>" <?= $selected_course === $course_option ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($course_option) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </div>
-            <div class="form-check form-check-inline">
-                <input class="form-check-input" type="checkbox" name="college[]" value="CHTM" id="chtm" <?= isChecked($enrollment_data, 'college', 'CHTM') ? 'checked' : '' ?>>
-                <label class="form-check-label" for="chtm">CHTM</label>
+            <div class="col-lg-4">
+                <label class="form-label">Major / Specialization</label>
+                <select class="form-select" name="major" id="majorSelect" data-selected="<?= htmlspecialchars($selected_major) ?>" <?= empty($available_majors) ? 'disabled' : '' ?>>
+                    <option value="">
+                        <?php
+                        if ($selected_college === '') {
+                            echo 'Select college first';
+                        } elseif ($selected_course === '') {
+                            echo 'Select course first';
+                        } elseif (empty($available_majors)) {
+                            echo 'Not applicable for selected course';
+                        } else {
+                            echo 'Select major';
+                        }
+                        ?>
+                    </option>
+                    <?php foreach ($available_majors as $major_option): ?>
+                        <option value="<?= htmlspecialchars($major_option) ?>" <?= $selected_major === $major_option ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($major_option) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <div class="field-hint">Major is only needed for programs that offer a specialization.</div>
             </div>
         </div>
-        
+
         <div class="row mb-3">
-            <div class="col-md-4">
-                <label class="form-label">Course *</label>
-                <input type="text" class="form-control" name="course" value="<?= htmlspecialchars(getValue($enrollment_data, 'course')) ?>" required>
-            </div>
-            <div class="col-md-4">
-                <label class="form-label">Major</label>
-                <input type="text" class="form-control" name="major" value="<?= htmlspecialchars(getValue($enrollment_data, 'major')) ?>">
-            </div>
             <div class="col-md-2">
                 <label class="form-label">Year Level *</label>
                 <select class="form-select" name="year_level" required>
@@ -756,7 +1218,14 @@ function isChecked($data, $key, $value) {
             </div>
             <div class="col-md-3">
                 <label class="form-label">Marital Status *</label>
-                <input type="text" class="form-control" name="marital_status" value="<?= htmlspecialchars(getValue($enrollment_data, 'marital_status')) ?>" required>
+                <select class="form-select" name="marital_status" required>
+                    <option value="">Select status</option>
+                    <?php foreach ($enrollment_marital_status_options as $status_option): ?>
+                        <option value="<?= htmlspecialchars($status_option) ?>" <?= $selected_marital_status === $status_option ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($status_option) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </div>
         </div>
         
@@ -998,11 +1467,11 @@ function isChecked($data, $key, $value) {
         
         <!-- F. SIGNATURE -->
         <div class="section-title">F. STUDENT SIGNATURE</div>
-        <div class="mb-3">
+        <div class="signature-panel mb-3">
             <label class="form-label">Draw your signature below:</label>
             <canvas id="signaturePad" class="signature-pad" width="600" height="200"></canvas>
             <input type="hidden" name="signature_image" id="signatureData" value="<?= htmlspecialchars(getValue($enrollment_data, 'signature_image')) ?>">
-            <div class="mt-2">
+            <div class="mt-3">
                 <button type="button" class="btn btn-secondary btn-sm" id="clearSignature">Clear Signature</button>
                 <?php if ($is_edit_mode && !empty($enrollment_data['signature_image'])): ?>
                     <button type="button" class="btn btn-info btn-sm" id="loadExistingSignature">Load Existing Signature</button>
@@ -1011,121 +1480,258 @@ function isChecked($data, $key, $value) {
         </div>
         
         <!-- SUBMIT BUTTON -->
-        <div class="text-center mt-4">
-            <a href="../student/profset.php" class="btn btn-secondary me-2">Cancel</a>
+        <div class="form-actions">
+            <a href="profset.php" class="btn btn-secondary">Cancel</a>
             <button type="submit" class="btn btn-custom btn-lg">
                 <?= $is_edit_mode ? '✅ Update Enrollment Form' : '✅ Submit Enrollment Form' ?>
             </button>
         </div>
     </form>
 </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+const programCatalog = <?= json_encode($enrollment_program_catalog, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+const collegeSelect = document.getElementById('collegeSelect');
+const courseSelect = document.getElementById('courseSelect');
+const majorSelect = document.getElementById('majorSelect');
+
+function populateDependentSelect(select, options, placeholder, selectedValue = '') {
+    const values = [...options];
+
+    if (selectedValue && !values.includes(selectedValue)) {
+        values.unshift(selectedValue);
+    }
+
+    select.innerHTML = '';
+
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = '';
+    placeholderOption.textContent = placeholder;
+    select.appendChild(placeholderOption);
+
+    values.forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        if (value === selectedValue) {
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+}
+
+function syncCourseOptions(selectedValue = '') {
+    const selectedCollege = collegeSelect.value;
+    const courseOptions = selectedCollege && programCatalog[selectedCollege]
+        ? Object.keys(programCatalog[selectedCollege])
+        : [];
+
+    populateDependentSelect(
+        courseSelect,
+        courseOptions,
+        selectedCollege ? 'Select course' : 'Select college first',
+        selectedValue
+    );
+
+    courseSelect.disabled = courseOptions.length === 0;
+}
+
+function syncMajorOptions(selectedValue = '') {
+    const selectedCollege = collegeSelect.value;
+    const selectedCourse = courseSelect.value;
+    const majorOptions = selectedCollege && selectedCourse && programCatalog[selectedCollege] && programCatalog[selectedCollege][selectedCourse]
+        ? programCatalog[selectedCollege][selectedCourse]
+        : [];
+
+    let placeholder = 'Select college first';
+    if (selectedCollege && !selectedCourse) {
+        placeholder = 'Select course first';
+    } else if (selectedCollege && selectedCourse && majorOptions.length === 0) {
+        placeholder = 'Not applicable for selected course';
+    } else if (majorOptions.length > 0) {
+        placeholder = 'Select major';
+    }
+
+    populateDependentSelect(majorSelect, majorOptions, placeholder, selectedValue);
+    majorSelect.disabled = majorOptions.length === 0 && selectedValue === '';
+}
+
+if (collegeSelect && courseSelect && majorSelect) {
+    const initialCourse = courseSelect.dataset.selected || '';
+    const initialMajor = majorSelect.dataset.selected || '';
+
+    syncCourseOptions(initialCourse);
+    syncMajorOptions(initialMajor);
+
+    collegeSelect.addEventListener('change', function() {
+        syncCourseOptions('');
+        syncMajorOptions('');
+    });
+
+    courseSelect.addEventListener('change', function() {
+        syncMajorOptions('');
+    });
+}
+
 // Signature Pad Implementation
 const canvas = document.getElementById('signaturePad');
 const ctx = canvas.getContext('2d');
 const signatureData = document.getElementById('signatureData');
+const existingSignatureSrc = <?= json_encode((string) getValue($enrollment_data, 'signature_image')) ?>;
+const baseCanvasWidth = parseInt(canvas.getAttribute('width'), 10) || 600;
+const baseCanvasHeight = parseInt(canvas.getAttribute('height'), 10) || 200;
 let isDrawing = false;
 let lastX = 0;
 let lastY = 0;
+let displayWidth = baseCanvasWidth;
+let displayHeight = baseCanvasHeight;
+let hasSignature = false;
 
-// Set canvas background to white
-ctx.fillStyle = 'white';
-ctx.fillRect(0, 0, canvas.width, canvas.height);
+canvas.style.touchAction = 'none';
+canvas.style.aspectRatio = `${baseCanvasWidth} / ${baseCanvasHeight}`;
 
-// Load existing signature if in edit mode
-<?php if ($is_edit_mode && !empty($enrollment_data['signature_image'])): ?>
-document.getElementById('loadExistingSignature')?.addEventListener('click', function() {
-    const img = new Image();
-    img.onload = function() {
-        ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0);
-    };
-    img.src = '<?= htmlspecialchars($enrollment_data['signature_image']) ?>';
-});
-
-// Auto-load existing signature on page load
-window.addEventListener('load', function() {
-    const img = new Image();
-    img.onload = function() {
-        ctx.drawImage(img, 0, 0);
-    };
-    img.src = '<?= htmlspecialchars($enrollment_data['signature_image']) ?>';
-});
-<?php endif; ?>
-
-canvas.addEventListener('mousedown', startDrawing);
-canvas.addEventListener('mousemove', draw);
-canvas.addEventListener('mouseup', stopDrawing);
-canvas.addEventListener('mouseout', stopDrawing);
-
-// Touch support for mobile
-canvas.addEventListener('touchstart', function(e) {
-    e.preventDefault();
-    const touch = e.touches[0];
-    const rect = canvas.getBoundingClientRect();
-    lastX = touch.clientX - rect.left;
-    lastY = touch.clientY - rect.top;
-    isDrawing = true;
-});
-
-canvas.addEventListener('touchmove', function(e) {
-    e.preventDefault();
-    if (!isDrawing) return;
-    const touch = e.touches[0];
-    const rect = canvas.getBoundingClientRect();
-    const x = touch.clientX - rect.left;
-    const y = touch.clientY - rect.top;
-    
-    ctx.beginPath();
-    ctx.moveTo(lastX, lastY);
-    ctx.lineTo(x, y);
+function applySignatureStyles() {
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 2;
-    ctx.stroke();
-    
-    lastX = x;
-    lastY = y;
-});
-
-canvas.addEventListener('touchend', stopDrawing);
-
-function startDrawing(e) {
-    isDrawing = true;
-    [lastX, lastY] = [e.offsetX, e.offsetY];
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 }
 
-function draw(e) {
-    if (!isDrawing) return;
-    ctx.beginPath();
-    ctx.moveTo(lastX, lastY);
-    ctx.lineTo(e.offsetX, e.offsetY);
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    [lastX, lastY] = [e.offsetX, e.offsetY];
+function fillSignatureBackground() {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, displayWidth, displayHeight);
 }
 
-function stopDrawing() {
-    if (isDrawing) {
-        signatureData.value = canvas.toDataURL();
-        isDrawing = false;
+function updateSignatureValue() {
+    signatureData.value = hasSignature ? canvas.toDataURL('image/png') : '';
+}
+
+function resizeSignatureCanvas(preserveDrawing = true) {
+    const previousImage = preserveDrawing && hasSignature ? canvas.toDataURL('image/png') : '';
+    const rect = canvas.getBoundingClientRect();
+    const nextWidth = Math.max(Math.round(rect.width || baseCanvasWidth), 1);
+    const nextHeight = Math.max(Math.round((nextWidth * baseCanvasHeight) / baseCanvasWidth), 1);
+    const ratio = Math.max(window.devicePixelRatio || 1, 1);
+
+    displayWidth = nextWidth;
+    displayHeight = nextHeight;
+
+    canvas.width = Math.round(displayWidth * ratio);
+    canvas.height = Math.round(displayHeight * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+    applySignatureStyles();
+    fillSignatureBackground();
+
+    if (previousImage) {
+        const img = new Image();
+        img.onload = function() {
+            fillSignatureBackground();
+            ctx.drawImage(img, 0, 0, displayWidth, displayHeight);
+            applySignatureStyles();
+            updateSignatureValue();
+        };
+        img.src = previousImage;
+    } else {
+        updateSignatureValue();
     }
 }
+
+function loadSignatureImage(source) {
+    if (!source) {
+        hasSignature = false;
+        resizeSignatureCanvas(false);
+        return;
+    }
+
+    const img = new Image();
+    img.onload = function() {
+        resizeSignatureCanvas(false);
+        fillSignatureBackground();
+        ctx.drawImage(img, 0, 0, displayWidth, displayHeight);
+        hasSignature = true;
+        updateSignatureValue();
+    };
+    img.src = source;
+}
+
+function getCanvasPoint(event) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+    };
+}
+
+function startDrawing(event) {
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+        return;
+    }
+
+    const point = getCanvasPoint(event);
+    isDrawing = true;
+    lastX = point.x;
+    lastY = point.y;
+    canvas.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+}
+
+function draw(event) {
+    if (!isDrawing) {
+        return;
+    }
+
+    const point = getCanvasPoint(event);
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+
+    lastX = point.x;
+    lastY = point.y;
+    hasSignature = true;
+    updateSignatureValue();
+    event.preventDefault();
+}
+
+function stopDrawing(event) {
+    if (!isDrawing) {
+        return;
+    }
+
+    isDrawing = false;
+    if (event && canvas.hasPointerCapture?.(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+    }
+    updateSignatureValue();
+}
+
+resizeSignatureCanvas(false);
+
+if (existingSignatureSrc) {
+    loadSignatureImage(existingSignatureSrc);
+}
+
+document.getElementById('loadExistingSignature')?.addEventListener('click', function() {
+    loadSignatureImage(existingSignatureSrc);
+});
+
+canvas.addEventListener('pointerdown', startDrawing);
+canvas.addEventListener('pointermove', draw);
+canvas.addEventListener('pointerup', stopDrawing);
+canvas.addEventListener('pointercancel', stopDrawing);
+canvas.addEventListener('pointerleave', stopDrawing);
+window.addEventListener('resize', () => resizeSignatureCanvas(true));
 
 document.getElementById('clearSignature').addEventListener('click', () => {
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    signatureData.value = '';
+    hasSignature = false;
+    resizeSignatureCanvas(false);
 });
 
-// Update signature data before submit
 document.getElementById('enrollmentForm').addEventListener('submit', function() {
-    if (canvas.toDataURL() !== document.getElementById('empty-canvas')?.toDataURL()) {
-        signatureData.value = canvas.toDataURL();
-    }
+    updateSignatureValue();
 });
 </script>
 </body>

@@ -1,5 +1,13 @@
 <?php
 
+if (!defined('RSERVES_STUDENT_TASK_TITLE_MAX_CHARS')) {
+    define('RSERVES_STUDENT_TASK_TITLE_MAX_CHARS', 80);
+}
+
+if (!defined('RSERVES_STUDENT_DESCRIPTION_MAX_CHARS')) {
+    define('RSERVES_STUDENT_DESCRIPTION_MAX_CHARS', 150);
+}
+
 if (!function_exists('rserves_student_schema_identifier')) {
     function rserves_student_schema_identifier(string $name): string
     {
@@ -48,12 +56,145 @@ if (!function_exists('rserves_student_schema_identifier')) {
         if (rserves_student_table_exists($conn, 'student_tasks')) {
             rserves_student_ensure_column($conn, 'student_tasks', 'assigned_at', 'DATETIME NULL DEFAULT CURRENT_TIMESTAMP');
             rserves_student_ensure_column($conn, 'student_tasks', 'completed_at', 'DATETIME NULL');
+            rserves_student_ensure_column($conn, 'student_tasks', 'student_view_status', "VARCHAR(20) NOT NULL DEFAULT 'active'");
+            rserves_student_ensure_column($conn, 'student_tasks', 'student_state_changed_at', 'DATETIME NULL');
         }
 
         if (rserves_student_table_exists($conn, 'accomplishment_reports')) {
             rserves_student_ensure_column($conn, 'accomplishment_reports', 'assigner_id', 'INT NULL DEFAULT NULL');
             rserves_student_ensure_column($conn, 'accomplishment_reports', 'student_task_id', 'INT NULL DEFAULT NULL');
         }
+    }
+
+    function rserves_student_text_length(string $value): int
+    {
+        if (function_exists('mb_strlen')) {
+            return mb_strlen($value);
+        }
+
+        return strlen($value);
+    }
+
+    function rserves_student_text_truncate(string $value, int $max_chars): string
+    {
+        if ($max_chars < 0 || rserves_student_text_length($value) <= $max_chars) {
+            return $value;
+        }
+
+        if (function_exists('mb_substr')) {
+            return mb_substr($value, 0, $max_chars);
+        }
+
+        return substr($value, 0, $max_chars);
+    }
+
+    function rserves_student_normalize_text(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+
+        $normalized = preg_replace('/\s+/u', ' ', $value);
+
+        return $normalized !== null ? trim($normalized) : $value;
+    }
+
+    function rserves_student_strip_task_tags(string $value): string
+    {
+        $clean = preg_replace('/\[\s*TaskID\s*:\s*\d+\s*\]/i', '', $value);
+
+        return trim($clean !== null ? $clean : $value);
+    }
+
+    function rserves_student_extract_report_task_title(string $activity): string
+    {
+        $clean_activity = rserves_student_strip_task_tags($activity);
+        $parts = explode(':', $clean_activity, 2);
+
+        if (count($parts) < 2) {
+            return '';
+        }
+
+        return rserves_student_normalize_text($parts[0]);
+    }
+
+    function rserves_student_is_image_attachment(?string $path): bool
+    {
+        $ext = strtolower(pathinfo((string) $path, PATHINFO_EXTENSION));
+        $image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'];
+
+        return in_array($ext, $image_extensions, true);
+    }
+
+    function rserves_student_save_attachment(string $file_input_name, int $student_id, string $upload_dir, string $relative_dir = 'uploads/accomplishments'): array
+    {
+        if (empty($_FILES[$file_input_name]['tmp_name'])) {
+            return ['path' => null, 'error' => null];
+        }
+
+        $file = $_FILES[$file_input_name];
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            return ['path' => null, 'error' => 'Unable to upload the selected attachment.'];
+        }
+
+        $ext = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+        $blocked_extensions = [
+            'php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'phar',
+            'cgi', 'pl', 'py', 'jsp', 'asp', 'aspx', 'exe', 'com', 'cmd',
+            'bat', 'sh', 'msi', 'scr', 'dll', 'so', 'vb', 'vbs'
+        ];
+
+        if ($ext !== '' && in_array($ext, $blocked_extensions, true)) {
+            return ['path' => null, 'error' => 'That attachment type is not allowed.'];
+        }
+
+        if (!is_dir($upload_dir) && !mkdir($upload_dir, 0777, true) && !is_dir($upload_dir)) {
+            return ['path' => null, 'error' => 'Could not prepare the upload folder.'];
+        }
+
+        try {
+            $random_suffix = bin2hex(random_bytes(4));
+        } catch (Throwable $e) {
+            $random_suffix = (string) mt_rand(1000, 9999);
+        }
+
+        $safe_extension = $ext !== '' ? '.' . preg_replace('/[^a-z0-9]+/i', '', $ext) : '';
+        $new_name = $file_input_name . '_' . $student_id . '_' . time() . '_' . $random_suffix . $safe_extension;
+        $destination = rtrim($upload_dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $new_name;
+
+        if (!move_uploaded_file($file['tmp_name'], $destination)) {
+            return ['path' => null, 'error' => 'Failed to store the uploaded attachment.'];
+        }
+
+        return [
+            'path' => trim($relative_dir, '/\\') . '/' . $new_name,
+            'error' => null,
+        ];
+    }
+
+    function rserves_student_validate_text_input(string $value, string $label, int $max_chars, bool $required = false): array
+    {
+        $normalized = rserves_student_normalize_text($value);
+
+        if ($required && $normalized === '') {
+            return [
+                'value' => $normalized,
+                'error' => 'Please enter ' . $label . '.',
+            ];
+        }
+
+        if (rserves_student_text_length($normalized) > $max_chars) {
+            return [
+                'value' => $normalized,
+                'error' => ucfirst($label) . ' must be ' . $max_chars . ' characters or fewer.',
+            ];
+        }
+
+        return [
+            'value' => $normalized,
+            'error' => null,
+        ];
     }
 
     function rserves_student_find_valid_assigner_id(mysqli $conn, array $student, int $requested_assigner_id = 0): int
@@ -121,6 +262,118 @@ if (!function_exists('rserves_student_schema_identifier')) {
         return 0;
     }
 
+    function rserves_student_has_duplicate_verbal_task(mysqli $conn, int $student_id, string $task_title, string $task_desc): bool
+    {
+        $stmt = $conn->prepare("
+            SELECT st.stask_id
+            FROM tasks t
+            INNER JOIN student_tasks st ON t.task_id = st.task_id
+            WHERE st.student_id = ?
+              AND COALESCE(t.created_by_student, 0) = ?
+              AND COALESCE(t.is_deleted, 0) = 0
+              AND LOWER(TRIM(t.title)) = LOWER(TRIM(?))
+              AND LOWER(TRIM(COALESCE(t.description, ''))) = LOWER(TRIM(?))
+            LIMIT 1
+        ");
+
+        if (!$stmt) {
+            return false;
+        }
+
+        $stmt->bind_param("iiss", $student_id, $student_id, $task_title, $task_desc);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $has_duplicate = $result && $result->fetch_assoc();
+        $stmt->close();
+
+        return (bool) $has_duplicate;
+    }
+
+    function rserves_student_has_same_day_duplicate_report(mysqli $conn, int $student_id, string $work_date, int $student_task_id = 0, string $task_title = ''): bool
+    {
+        $stmt = $conn->prepare("
+            SELECT activity, student_task_id
+            FROM accomplishment_reports
+            WHERE student_id = ?
+              AND work_date = ?
+        ");
+
+        if (!$stmt) {
+            return false;
+        }
+
+        $stmt->bind_param("is", $student_id, $work_date);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        $normalized_task_title = rserves_student_normalize_text($task_title);
+        while ($row = $result->fetch_assoc()) {
+            $existing_task_id = intval($row['student_task_id'] ?? 0);
+            $existing_activity = (string) ($row['activity'] ?? '');
+
+            if ($student_task_id > 0) {
+                if ($existing_task_id === $student_task_id) {
+                    $stmt->close();
+                    return true;
+                }
+
+                $task_ids = function_exists('rserves_instructor_extract_student_task_ids_from_activity')
+                    ? rserves_instructor_extract_student_task_ids_from_activity($existing_activity)
+                    : rserves_student_extract_task_ids_from_activity_list($existing_activity);
+
+                if (in_array($student_task_id, $task_ids, true)) {
+                    $stmt->close();
+                    return true;
+                }
+            }
+
+            if ($student_task_id <= 0 && $normalized_task_title !== '') {
+                $existing_title = rserves_student_extract_report_task_title($existing_activity);
+                if ($existing_title !== '' && strcasecmp($existing_title, $normalized_task_title) === 0) {
+                    $stmt->close();
+                    return true;
+                }
+            }
+        }
+
+        $stmt->close();
+        return false;
+    }
+
+    function rserves_student_extract_task_ids_from_activity_list(string $activity): array
+    {
+        if (preg_match_all('/\[TaskID:(\d+)\]/', $activity, $matches) === false || empty($matches[1])) {
+            return [];
+        }
+
+        return array_values(array_unique(array_map('intval', $matches[1] ?? [])));
+    }
+
+    function rserves_student_update_task_visibility(mysqli $conn, int $student_id, int $student_task_id, string $state): bool
+    {
+        $allowed_states = ['active', 'archived', 'deleted'];
+        if (!in_array($state, $allowed_states, true)) {
+            return false;
+        }
+
+        $stmt = $conn->prepare("
+            UPDATE student_tasks
+            SET student_view_status = ?, student_state_changed_at = NOW()
+            WHERE stask_id = ? AND student_id = ?
+        ");
+
+        if (!$stmt) {
+            return false;
+        }
+
+        $stmt->bind_param("sii", $state, $student_task_id, $student_id);
+        $stmt->execute();
+        $updated = $stmt->affected_rows >= 0;
+        $stmt->close();
+
+        return $updated;
+    }
+
     function rserves_create_student_verbal_task(mysqli $conn, array $student, int $student_id, array $post, bool $enforce_token = true): string
     {
         rserves_student_ensure_task_schema($conn);
@@ -141,14 +394,20 @@ if (!function_exists('rserves_student_schema_identifier')) {
         // Regenerate for security after successful validation
         $_SESSION['student_task_form_token'] = bin2hex(random_bytes(16));
 
-        $task_title = trim((string)($post['task_title'] ?? ''));
-        $task_desc = trim((string)($post['task_description'] ?? ''));
+        $task_title_check = rserves_student_validate_text_input((string)($post['task_title'] ?? ''), 'task category', RSERVES_STUDENT_TASK_TITLE_MAX_CHARS, true);
+        if ($task_title_check['error'] !== null) {
+            return $task_title_check['error'];
+        }
+
+        $task_desc_check = rserves_student_validate_text_input((string)($post['task_description'] ?? ''), 'description', RSERVES_STUDENT_DESCRIPTION_MAX_CHARS, false);
+        if ($task_desc_check['error'] !== null) {
+            return $task_desc_check['error'];
+        }
+
+        $task_title = $task_title_check['value'];
+        $task_desc = $task_desc_check['value'];
         $duration = trim((string)($post['duration'] ?? ''));
         $allowed_durations = ['Within a Day', 'Within a Week', 'Within a Month'];
-
-        if ($task_title === '') {
-            return 'Please select a task category before creating a task.';
-        }
 
         if (!in_array($duration, $allowed_durations, true)) {
             return 'Please select a valid duration.';
@@ -163,6 +422,10 @@ if (!function_exists('rserves_student_schema_identifier')) {
         $assigner_id = rserves_student_find_valid_assigner_id($conn, $student, $requested_assigner_id);
         if ($assigner_id <= 0) {
             return 'Task creation failed because no valid instructor or adviser could be resolved for this student.';
+        }
+
+        if (rserves_student_has_duplicate_verbal_task($conn, $student_id, $task_title, $task_desc)) {
+            return 'This verbal task already exists. Please update the existing task instead of creating a duplicate.';
         }
 
         $conn->begin_transaction();
@@ -284,6 +547,7 @@ if (!function_exists('rserves_student_schema_identifier')) {
             INNER JOIN tasks t ON st.task_id = t.task_id
             LEFT JOIN instructors i ON t.instructor_id = i.inst_id
             WHERE st.student_id = ?
+              AND COALESCE(st.student_view_status, 'active') = 'active'
               AND COALESCE(t.is_deleted, 0) = 0
             ORDER BY COALESCE(t.created_at, st.assigned_at) DESC, st.stask_id DESC
         ");
@@ -357,5 +621,51 @@ if (!function_exists('rserves_student_schema_identifier')) {
         }
 
         return $visible_tasks;
+    }
+
+    function rserves_fetch_student_archived_tasks(mysqli $conn, int $student_id): array
+    {
+        rserves_student_ensure_task_schema($conn);
+
+        $stmt = $conn->prepare("
+            SELECT
+                st.stask_id,
+                st.status,
+                st.assigned_at,
+                st.student_view_status,
+                st.student_state_changed_at,
+                t.task_id,
+                t.title,
+                t.description,
+                t.duration,
+                t.created_by_student,
+                t.created_at,
+                i.firstname AS inst_fname,
+                i.lastname AS inst_lname
+            FROM student_tasks st
+            INNER JOIN tasks t ON st.task_id = t.task_id
+            LEFT JOIN instructors i ON t.instructor_id = i.inst_id
+            WHERE st.student_id = ?
+              AND COALESCE(st.student_view_status, 'active') IN ('archived', 'deleted')
+            ORDER BY COALESCE(st.student_state_changed_at, t.created_at, st.assigned_at) DESC, st.stask_id DESC
+        ");
+
+        if (!$stmt) {
+            return [];
+        }
+
+        $stmt->bind_param("i", $student_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+
+        $tasks = [];
+        while ($row = $result->fetch_assoc()) {
+            $row['is_verbal'] = intval($row['created_by_student'] ?? 0) === $student_id;
+            $tasks[] = $row;
+        }
+
+        $stmt->close();
+
+        return $tasks;
     }
 }

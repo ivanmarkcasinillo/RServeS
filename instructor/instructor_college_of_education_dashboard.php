@@ -4,6 +4,7 @@ session_start();
 require "dbconnect.php";
  include "../student/check_expiration.php";
 require_once "../send_email.php";
+require_once __DIR__ . '/task_assignment_helper.php';
 
 /* -------------------  SESSION CHECK ------------------- */
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Instructor' || $_SESSION['department_id'] != 1) {
@@ -64,6 +65,12 @@ $fullname = $instructor['firstname']
 $photo = !empty($instructor['photo'])
        ? 'uploads/' . basename($instructor['photo'])
        : 'default_profile.jpg';
+
+try {
+    rserves_instructor_sync_task_assignments_for_instructor($conn, $inst_id);
+} catch (Throwable $e) {
+    error_log("Instructor task assignment sync failed for instructor {$inst_id}: " . $e->getMessage());
+}
 
 /* -------------------  HANDLE PHOTO UPLOAD ------------------- */
 if (!empty($_FILES['profilePhoto']['tmp_name'])) {
@@ -297,22 +304,119 @@ if (isset($_POST['delete_task'])) {
 /* -------------------  APPROVE/REJECT STUDENT ACCOMPLISHMENTS (ADVISORY) ------------------- */
 if (isset($_POST['approve_accomp'])) {
     $ar_id = intval($_POST['ar_id']);
-    // Update status AND set the approver_id to current instructor
-    $stmt = $conn->prepare("UPDATE accomplishment_reports SET status='Approved', approver_id=? WHERE id=?");
-    $stmt->bind_param("ii", $inst_id, $ar_id);
-    $stmt->execute();
-    $stmt->close();
-    header("Location: ".$_SERVER['PHP_SELF']."?msg=".urlencode("Accomplishment approved!"));
+    $message = "Accomplishment approved!";
+
+    try {
+        $conn->begin_transaction();
+
+        $stmt = $conn->prepare("UPDATE accomplishment_reports SET status='Approved', approver_id=? WHERE id=?");
+        if (!$stmt) {
+            throw new RuntimeException($conn->error);
+        }
+
+        $stmt->bind_param("ii", $inst_id, $ar_id);
+        if (!$stmt->execute()) {
+            $stmt_error = $stmt->error;
+            $stmt->close();
+            throw new RuntimeException($stmt_error);
+        }
+        $stmt->close();
+
+        rserves_instructor_sync_accomplishment_student_tasks($conn, $ar_id);
+        $conn->commit();
+    } catch (Throwable $e) {
+        $conn->rollback();
+        error_log("Instructor accomplishment approval failed for report {$ar_id}: " . $e->getMessage());
+        $message = "Accomplishment approval failed. Please try again.";
+    }
+
+    if ($message === "Accomplishment approved!") {
+        $notify_stmt = $conn->prepare("SELECT student_id, activity, work_date FROM accomplishment_reports WHERE id = ? LIMIT 1");
+        if ($notify_stmt) {
+            $notify_stmt->bind_param("i", $ar_id);
+            $notify_stmt->execute();
+            $notify_row = $notify_stmt->get_result()->fetch_assoc();
+            $notify_stmt->close();
+
+            if (!empty($notify_row['student_id'])) {
+                $student = rserves_fetch_student_email_recipient($conn, intval($notify_row['student_id']));
+                if ($student) {
+                    $activity_label = trim((string) preg_replace('/\[\s*TaskID\s*:\s*\d+\s*\]/i', '', (string) ($notify_row['activity'] ?? '')));
+                    $body = rserves_notification_build_body(
+                        rserves_notification_recipient_name($student),
+                        "Your accomplishment report was approved.",
+                        [
+                            'Work Date' => (string) ($notify_row['work_date'] ?? ''),
+                            'Activity' => $activity_label !== '' ? $activity_label : 'RSS accomplishment',
+                            'Status' => 'Approved',
+                        ]
+                    );
+                    rserves_send_bulk_notification_email([$student], 'Accomplishment Approved', $body);
+                }
+            }
+        }
+    }
+
+    header("Location: ".$_SERVER['PHP_SELF']."?msg=".urlencode($message));
     exit;
 }
 
 if (isset($_POST['reject_accomp'])) {
     $ar_id = intval($_POST['ar_id']);
-    $stmt = $conn->prepare("UPDATE accomplishment_reports SET status='Rejected' WHERE id=?");
-    $stmt->bind_param("i", $ar_id);
-    $stmt->execute();
-    $stmt->close();
-    header("Location: ".$_SERVER['PHP_SELF']."?msg=".urlencode("Accomplishment rejected!"));
+    $message = "Accomplishment rejected!";
+
+    try {
+        $conn->begin_transaction();
+
+        $stmt = $conn->prepare("UPDATE accomplishment_reports SET status='Rejected' WHERE id=?");
+        if (!$stmt) {
+            throw new RuntimeException($conn->error);
+        }
+
+        $stmt->bind_param("i", $ar_id);
+        if (!$stmt->execute()) {
+            $stmt_error = $stmt->error;
+            $stmt->close();
+            throw new RuntimeException($stmt_error);
+        }
+        $stmt->close();
+
+        rserves_instructor_sync_accomplishment_student_tasks($conn, $ar_id);
+        $conn->commit();
+    } catch (Throwable $e) {
+        $conn->rollback();
+        error_log("Instructor accomplishment rejection failed for report {$ar_id}: " . $e->getMessage());
+        $message = "Accomplishment rejection failed. Please try again.";
+    }
+
+    if ($message === "Accomplishment rejected!") {
+        $notify_stmt = $conn->prepare("SELECT student_id, activity, work_date FROM accomplishment_reports WHERE id = ? LIMIT 1");
+        if ($notify_stmt) {
+            $notify_stmt->bind_param("i", $ar_id);
+            $notify_stmt->execute();
+            $notify_row = $notify_stmt->get_result()->fetch_assoc();
+            $notify_stmt->close();
+
+            if (!empty($notify_row['student_id'])) {
+                $student = rserves_fetch_student_email_recipient($conn, intval($notify_row['student_id']));
+                if ($student) {
+                    $activity_label = trim((string) preg_replace('/\[\s*TaskID\s*:\s*\d+\s*\]/i', '', (string) ($notify_row['activity'] ?? '')));
+                    $body = rserves_notification_build_body(
+                        rserves_notification_recipient_name($student),
+                        "Your accomplishment report was rejected.",
+                        [
+                            'Work Date' => (string) ($notify_row['work_date'] ?? ''),
+                            'Activity' => $activity_label !== '' ? $activity_label : 'RSS accomplishment',
+                            'Status' => 'Rejected',
+                        ]
+                    );
+                    rserves_send_bulk_notification_email([$student], 'Accomplishment Rejected', $body);
+                }
+            }
+        }
+    }
+
+    header("Location: ".$_SERVER['PHP_SELF']."?msg=".urlencode($message));
     exit;
 }
 
@@ -504,7 +608,8 @@ $mt_stmt = $conn->prepare("
         (SELECT COUNT(*) FROM student_tasks st WHERE st.task_id = t.task_id) as assigned_count,
         (SELECT COUNT(DISTINCT st.student_id) 
          FROM student_tasks st 
-         JOIN accomplishment_reports ar ON ar.student_id = st.student_id AND ar.activity LIKE CONCAT('%[TaskID:', st.task_id, ']%') 
+         JOIN accomplishment_reports ar ON ar.student_id = st.student_id 
+            AND (ar.student_task_id = st.stask_id OR ar.activity LIKE CONCAT('%[TaskID:', st.stask_id, ']%')) 
          WHERE st.task_id = t.task_id 
          AND ar.status IN ('Verified', 'Approved')) as completed_count
     FROM tasks t 
@@ -915,8 +1020,9 @@ if ($notifs_query) {
             .rserve-page-loader__spinner { animation: none; }
         }
     </style>
+    <link rel="stylesheet" href="../assets/css/rserve-dashboard-theme.css">
 </head>
-<body>
+<body class="rserve-theme">
 
 <div id="rserve-page-loader" class="rserve-page-loader" aria-hidden="true">
     <div class="rserve-page-loader__inner">
@@ -940,11 +1046,11 @@ if ($notifs_query) {
         </div>
     </div>
     <div class="mobile-header-nav">
-        <a href="#" class="nav-item active" onclick="showView('dashboard', this)">
+        <a href="#" class="nav-item active" data-view-link="dashboard" onclick="showView('dashboard', this); return false;">
             <i class="fas fa-th-large"></i>
-            <span>Dashboard</span>
+            <span>Overview</span>
         </a>
-        <a href="#" class="nav-item position-relative" onclick="showView('advisory', this)">
+        <a href="#" class="nav-item position-relative" data-view-link="advisory" onclick="showView('advisory', this); return false;">
             <i class="fas fa-chalkboard-teacher"></i>
             <span>Advisory</span>
             <?php if ($pending_count > 0): ?>
@@ -953,15 +1059,15 @@ if ($notifs_query) {
                 </span>
             <?php endif; ?>
         </a>
-        <a href="#" class="nav-item" onclick="showView('classes', this)">
+        <a href="#" class="nav-item" data-view-link="classes" onclick="showView('classes', this); return false;">
             <i class="fas fa-users"></i>
             <span>Classes</span>
         </a>
-        <a href="#" class="nav-item" onclick="showView('tasks', this)">
+        <a href="#" class="nav-item" data-view-link="tasks" onclick="showView('tasks', this); return false;">
             <i class="fas fa-tasks"></i>
             <span>Tasks</span>
         </a>
-        <a href="#" class="nav-item position-relative" onclick="showView('notifications', this)">
+        <a href="#" class="nav-item position-relative" data-view-link="notifications" onclick="showView('notifications', this); return false;">
             <i class="fas fa-bell"></i>
             <span>Notifs</span>
             <?php if ($unread_notifs > 0): ?>
@@ -980,54 +1086,76 @@ if ($notifs_query) {
 <div class="d-flex" id="wrapper">
     <!-- Sidebar -->
     <div id="sidebar-wrapper">
-         <div class="sidebar-heading">
-            <i class="fas"></i> <img src="../img/logo.png" alt="RServeS Logo" style="width: 40px; height: auto;"> RServeS
-        </div>
-        <div class="list-group list-group-flush">
-            <a href="#" class="list-group-item list-group-item-action active" onclick="showView('dashboard', this)">
-                <i class="fas fa-th-large"></i> Dashboard
-            </a>
-            <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" onclick="showView('advisory', this)">
-                <span><i class="fas fa-chalkboard-teacher"></i> Advisory</span>
-                <?php if ($pending_count > 0): ?>
-                    <span class="badge bg-warning text-dark rounded-pill"><?php echo $pending_count; ?></span>
-                <?php endif; ?>
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" onclick="showView('classes', this)">
-                <i class="fas fa-users"></i> Classes
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" onclick="showView('tasks', this)">
-                <i class="fas fa-tasks"></i> Tasks
-            </a>
-            <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" onclick="showView('notifications', this)">
-                <span><i class="fas fa-bell"></i> Notifications</span>
-                <?php if ($unread_notifs > 0): ?>
-                    <span class="badge bg-danger rounded-pill"><?php echo $unread_notifs; ?></span>
-                <?php endif; ?>
-            </a>
-            <a href="#" class="list-group-item list-group-item-action" data-bs-toggle="modal" data-bs-target="#profileModal">
-                <i class="fas fa-user-circle"></i> Profile
-            </a>
-            <a href="logout.php" class="list-group-item list-group-item-action mt-auto">
-                <i class="fas fa-sign-out-alt"></i> Logout
-            </a>
+        <div class="sidebar-shell">
+            <div class="sidebar-heading">
+                <span class="sidebar-brand-title">RServeS Portal</span>
+                <span class="sidebar-brand-subtitle">Adviser Workspace</span>
+            </div>
+            <div class="list-group list-group-flush">
+                <a href="#" class="list-group-item list-group-item-action active" data-view-link="dashboard" onclick="showView('dashboard', this); return false;">
+                    <i class="fas fa-th-large"></i> Dashboard
+                </a>
+                <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" data-view-link="advisory" onclick="showView('advisory', this); return false;">
+                    <span><i class="fas fa-chalkboard-teacher"></i> Advisory</span>
+                    <?php if ($pending_count > 0): ?>
+                        <span class="badge bg-warning text-dark rounded-pill"><?php echo $pending_count; ?></span>
+                    <?php endif; ?>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-view-link="classes" onclick="showView('classes', this); return false;">
+                    <i class="fas fa-users"></i> Classes
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-view-link="tasks" onclick="showView('tasks', this); return false;">
+                    <i class="fas fa-tasks"></i> Tasks
+                </a>
+                <a href="#" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" data-view-link="notifications" onclick="showView('notifications', this); return false;">
+                    <span><i class="fas fa-bell"></i> Notifications</span>
+                    <?php if ($unread_notifs > 0): ?>
+                        <span class="badge bg-danger rounded-pill"><?php echo $unread_notifs; ?></span>
+                    <?php endif; ?>
+                </a>
+                <a href="#" class="list-group-item list-group-item-action" data-bs-toggle="modal" data-bs-target="#profileModal">
+                    <i class="fas fa-user-circle"></i> Profile
+                </a>
+                <a href="logout.php" class="list-group-item list-group-item-action">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </div>
+            <div class="role-sidebar-card">
+                <div class="sidebar-role-profile">
+                    <img src="<?php echo htmlspecialchars($photo); ?>" alt="Profile" class="sidebar-role-avatar">
+                    <div>
+                        <div class="sidebar-role-name"><?php echo htmlspecialchars($fullname); ?></div>
+                        <div class="sidebar-role-meta"><?php echo !empty($advisory_sections) ? 'Sections: ' . htmlspecialchars(implode(', ', $advisory_sections)) : 'No section assigned'; ?></div>
+                    </div>
+                </div>
+                <button type="button" class="sidebar-support-btn" data-bs-toggle="modal" data-bs-target="#profileModal">
+                    Profile Center
+                </button>
+            </div>
         </div>
     </div>
 
     <!-- Page Content -->
     <div id="page-content-wrapper">
-        <nav class="navbar navbar-expand-lg navbar-light">
-
-            
-            <div class="ms-auto d-flex align-items-center">
-                <a href="#" class="btn btn-link text-white me-3" onclick="showView('advisory')" title="Advisory">
-                    <i class="fas fa-chalkboard-teacher"></i>
-                </a>
-                <div class="me-3 text-end d-none d-md-block text-white">
-                    <div class="fw-bold"><?php echo htmlspecialchars($fullname); ?></div>
-                    <small>Instructor</small>
+        <nav class="navbar navbar-expand-lg">
+            <div class="topbar-shell">
+                <div class="topbar-tabs d-none d-lg-flex">
+                    <a href="#" class="topbar-tab active" data-view-link="dashboard" onclick="showView('dashboard'); return false;">Overview</a>
+                    <a href="#" class="topbar-tab" data-view-link="advisory" onclick="showView('advisory'); return false;">Advisory</a>
+                    <a href="#" class="topbar-tab" data-view-link="classes" onclick="showView('classes'); return false;">Classes</a>
+                    <a href="#" class="topbar-tab" data-view-link="tasks" onclick="showView('tasks'); return false;">Tasks</a>
+                    <a href="#" class="topbar-tab" data-view-link="notifications" onclick="showView('notifications'); return false;">Notifications</a>
                 </div>
-                <img src="<?php echo htmlspecialchars($photo); ?>" alt="Profile" class="profile-img-nav" data-bs-toggle="modal" data-bs-target="#profileModal" style="cursor: pointer;">
+
+                <div class="topbar-actions">
+                    <div class="topbar-profile" data-bs-toggle="modal" data-bs-target="#profileModal">
+                        <div class="topbar-identity">
+                            <div><?php echo htmlspecialchars($fullname); ?></div>
+                            <div>Adviser | College of Education</div>
+                        </div>
+                        <img src="<?php echo htmlspecialchars($photo); ?>" alt="Profile" class="topbar-avatar">
+                    </div>
+                </div>
             </div>
         </nav>
 
@@ -1324,12 +1452,14 @@ function togglePasswordVisibility(icon, fieldId) {
 
 
     // View Management
-    function showView(viewName, linkElement) {
-        // Update Sidebar Active State
-        if(linkElement) {
-            document.querySelectorAll('.list-group-item, .mobile-header-nav .nav-item').forEach(el => el.classList.remove('active'));
-            linkElement.classList.add('active');
-        }
+    function setActiveViewLinks(viewName) {
+        document.querySelectorAll('[data-view-link]').forEach((item) => {
+            item.classList.toggle('active', item.getAttribute('data-view-link') === viewName);
+        });
+    }
+
+    function showView(viewName) {
+        setActiveViewLinks(viewName);
 
         const container = document.getElementById('main-content');
         container.innerHTML = ''; // Clear content
@@ -1339,6 +1469,60 @@ function togglePasswordVisibility(icon, fieldId) {
         else if(viewName === 'advisory') renderAdvisory(container);
         else if(viewName === 'tasks') renderTasks(container);
         else if(viewName === 'notifications') renderNotifications(container);
+    }
+
+    function findViewTrigger(viewName) {
+        return document.querySelector(`[data-view-link="${viewName}"]`);
+    }
+
+    function highlightNotificationTarget(selector) {
+        if (!selector) return;
+
+        const target = document.querySelector(selector);
+        if (!target) return;
+
+        target.classList.add('border-primary', 'shadow-sm');
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        window.setTimeout(() => {
+            target.classList.remove('border-primary', 'shadow-sm');
+        }, 2200);
+    }
+
+    function openInstructorNotification(notificationId) {
+        const notification = (notifications || []).find((item) => String(item.id) === String(notificationId));
+        if (!notification) return;
+
+        const type = String(notification.type || '').toLowerCase();
+
+        if (type.includes('task')) {
+            showView('tasks', findViewTrigger('tasks'));
+            window.requestAnimationFrame(() => {
+                highlightNotificationTarget(notification.reference_id ? `[data-task-id="${notification.reference_id}"]` : '');
+                if (notification.reference_id && typeof openTaskDetailsModal === 'function') {
+                    openTaskDetailsModal(notification.reference_id);
+                }
+            });
+            return;
+        }
+
+        showView('advisory', findViewTrigger('advisory'));
+
+        window.requestAnimationFrame(() => {
+            if (type.includes('accomp') || type.includes('submission') || type.includes('report')) {
+                highlightNotificationTarget(
+                    notification.reference_id
+                        ? `[data-accomp-id="${notification.reference_id}"]`
+                        : (notification.student_id ? `[data-student-id="${notification.student_id}"]` : '')
+                );
+                return;
+            }
+
+            if (notification.student_id && typeof viewStudentDetails === 'function') {
+                highlightNotificationTarget(`[data-student-id="${notification.student_id}"]`);
+                viewStudentDetails(notification.student_id);
+            }
+        });
     }
 
     function renderAdvisory(container) {
@@ -1368,8 +1552,8 @@ function togglePasswordVisibility(icon, fieldId) {
                                 const fullName = `${acc.firstname} ${acc.mi ? acc.mi + '.' : ''} ${acc.lastname}`;
                                 const date = new Date(acc.work_date).toLocaleDateString();
                                 let photoHtml = '';
-                                if(acc.photo) photoHtml += `<a href="../student/${acc.photo}" target="_blank" class="btn btn-sm btn-outline-info me-1"><i class="fas fa-image"></i> 1</a>`;
-                                if(acc.photo2) photoHtml += `<a href="../student/${acc.photo2}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-image"></i> 2</a>`;
+                                if(acc.photo) photoHtml += `<a href="../student/${acc.photo}" target="_blank" class="btn btn-sm btn-outline-info me-1"><i class="fas fa-paperclip"></i> 1</a>`;
+                                if(acc.photo2) photoHtml += `<a href="../student/${acc.photo2}" target="_blank" class="btn btn-sm btn-outline-info"><i class="fas fa-paperclip"></i> 2</a>`;
                                 
                                 let assignedByHtml = '';
                                 if (acc.assigner_fname) {
@@ -1381,7 +1565,7 @@ function togglePasswordVisibility(icon, fieldId) {
                                 }
 
                                 return `
-                                <tr>
+                                <tr data-accomp-id="${acc.id}" data-student-id="${acc.student_id}">
                                     <td>
                                         <div class="fw-bold">${fullName}</div>
                                         <div class="small text-muted">Section ${acc.section}</div>
@@ -1392,7 +1576,7 @@ function togglePasswordVisibility(icon, fieldId) {
                                         ${assignedByHtml}
                                     </td>
                                     <td><span class="badge bg-secondary">${acc.hours} hrs</span></td>
-                                    <td>${photoHtml || '<span class="text-muted small">No photos</span>'}</td>
+                                    <td>${photoHtml || '<span class="text-muted small">No attachments</span>'}</td>
                                     <td>
                                         <div class="d-flex gap-2">
                                             <form method="POST" onsubmit="return confirm('Approve this accomplishment?');">
@@ -1462,7 +1646,7 @@ function togglePasswordVisibility(icon, fieldId) {
                      const progress = Math.min((hours / 300) * 100, 100).toFixed(1);
                      
                      html += `
-                        <tr>
+                        <tr data-student-id="${student.stud_id}">
                             <td>
                                 <div class="d-flex align-items-center">
                                     <img src="${photoUrl}" class="rounded-circle me-3" style="width: 40px; height: 40px; object-fit: cover;" onerror="this.onerror=null;this.src='../img/logo.png'">
@@ -1568,17 +1752,21 @@ function togglePasswordVisibility(icon, fieldId) {
                 
                 groups[label].forEach(n => {
                     const bgClass = n.is_read == 0 ? 'bg-light' : '';
-                    const icon = 'fa-info-circle';
+                    const type = String(n.type || '').toLowerCase();
+                    const icon = type.includes('task')
+                        ? 'fa-tasks'
+                        : (type.includes('accomp') || type.includes('submission') || type.includes('report') ? 'fa-file-circle-check' : 'fa-user-clock');
                     const date = new Date(n.created_at).toLocaleString();
                     html += `
-                        <div class="list-group-item ${bgClass} d-flex justify-content-between align-items-center">
+                        <button type="button" class="list-group-item list-group-item-action ${bgClass} d-flex justify-content-between align-items-center text-start" onclick="openInstructorNotification(${n.id})">
                             <div>
                                 <i class="fas ${icon} me-2 text-primary"></i>
                                 ${n.message}
                                 <br><small class="text-muted ms-4">${date}</small>
+                                <br><small class="text-primary fw-semibold ms-4">Open related feature</small>
                             </div>
                             ${n.is_read == 0 ? '<span class="badge bg-primary rounded-pill">New</span>' : ''}
-                        </div>
+                        </button>
                     `;
                 });
                 
@@ -1658,10 +1846,10 @@ function togglePasswordVisibility(icon, fieldId) {
                     <div class="content-card">
                         <h4>Quick Actions</h4>
                         <div class="d-flex gap-3 mt-3">
-                            <button class="btn btn-primary" onclick="showView('tasks', document.querySelector('[onclick*=\\'tasks\\']'))">
+                            <button class="btn btn-primary" onclick="showView('tasks', findViewTrigger('tasks'))">
                                 <i class="fas fa-plus-circle me-2"></i> Create Task
                             </button>
-                            <button class="btn btn-outline-secondary" onclick="showView('classes', document.querySelector('[onclick*=\\'classes\\']'))">
+                            <button class="btn btn-outline-secondary" onclick="showView('classes', findViewTrigger('classes'))">
                                 <i class="fas fa-eye me-2"></i> View Students
                             </button>
                         </div>
@@ -1998,7 +2186,7 @@ function togglePasswordVisibility(icon, fieldId) {
                 const dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
                 
                 tasksHtml += `
-                    <tr>
+                    <tr data-task-id="${task.task_id}">
                         <td class="fw-bold text-primary">${task.title}</td>
                         <td><div class="text-truncate" style="max-width: 300px;" title="${task.description}">${task.description}</div></td>
                         <td><small class="text-muted">${dateStr}</small></td>

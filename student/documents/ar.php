@@ -2,6 +2,7 @@
 <?php
 session_start();
 require "../dbconnect.php";
+require_once __DIR__ . "/../task_backend.php";
 
 date_default_timezone_set('Asia/Manila'); // set to your timezone
 
@@ -786,6 +787,17 @@ font-size: var(--fs-xs);
           </tr>
         </thead>
         <tbody>
+  <?php
+    $date_rowspans = [];
+    foreach ($accomplishments as $acc) {
+      $date_key = (string)($acc['work_date'] ?? '');
+      if ($date_key === '') {
+        continue;
+      }
+      $date_rowspans[$date_key] = ($date_rowspans[$date_key] ?? 0) + 1;
+    }
+    $rendered_dates = [];
+  ?>
   <?php foreach ($accomplishments as $acc): ?>
     <?php 
       // Parse activity for title
@@ -794,9 +806,13 @@ font-size: var(--fs-xs);
       $has_title = count($parts) > 1;
       $title = $has_title ? trim($parts[0]) : '';
       $desc = $has_title ? trim($parts[1]) : $clean_activity;
+      $date_key = (string)($acc['work_date'] ?? '');
     ?>
     <tr>
-      <td><?= date('F d, Y', strtotime($acc['work_date'])) ?></td>
+      <?php if (!isset($rendered_dates[$date_key])): ?>
+        <?php $rendered_dates[$date_key] = true; ?>
+        <td rowspan="<?= max(1, (int)($date_rowspans[$date_key] ?? 1)) ?>"><?= date('F d, Y', strtotime($acc['work_date'])) ?></td>
+      <?php endif; ?>
       <td>
         <?php if ($has_title): ?>
           <strong><?= htmlspecialchars($title) ?> : </strong>
@@ -884,37 +900,16 @@ font-size: var(--fs-xs);
 
 <!-- Attachments Page -->
 <?php 
-$photos_exist = false;
+$attachments_exist = false;
 foreach ($accomplishments as $acc) {
-  if (!empty($acc['photo']) || !empty($acc['photo'])) {
-    
-$photo_groups = [];
-foreach ($accomplishments as $acc) {
-    if (!empty($acc['photo']) || !empty($acc['photo2'])) {
-        $date_key = date('F d, Y', strtotime($acc['work_date']));
-        if (!isset($photo_groups[$date_key])) {
-            $photo_groups[$date_key] = [
-                'date' => $date_key,
-                'activity' => $acc['activity'],
-                'photos' => []
-            ];
-        }
-        if (!empty($acc['photo'])) {
-            $photo_groups[$date_key]['photos'][] = $acc['photo'];
-        }
-        if (!empty($acc['photo2'])) {
-            $photo_groups[$date_key]['photos'][] = $acc['photo2'];
-        }
-    }
-}
-
-    $photos_exist = true;
+  if (!empty($acc['photo']) || !empty($acc['photo2'])) {
+    $attachments_exist = true;
     break;
   }
 }
 ?>
 
-<?php if ($photos_exist): ?>
+<?php if ($attachments_exist): ?>
 <div class="page-container attachments-page">
   <!-- Attachments Header -->
   <div class="attachments-header">
@@ -926,7 +921,7 @@ foreach ($accomplishments as $acc) {
     <thead>
       <tr>
         <td style="background: #333; color: white; font-weight: bold; text-align: center; padding: 10px;">EVENT</td>
-        <td style="background: #333; color: white; font-weight: bold; text-align: center; padding: 10px;">SUPPORTING PHOTOS</td>
+        <td style="background: #333; color: white; font-weight: bold; text-align: center; padding: 10px;">SUPPORTING ATTACHMENTS</td>
       </tr>
     </thead>
     <tbody>
@@ -999,6 +994,9 @@ if (!empty($acc['photo2'])) {
             $afterFull = "../../$afterPath";
         }
     }
+
+    $beforeIsImage = $beforeFull ? rserves_student_is_image_attachment($beforeFull) : false;
+    $afterIsImage = $afterFull ? rserves_student_is_image_attachment($afterFull) : false;
   ?>
 
   <tr>
@@ -1017,19 +1015,31 @@ if (!empty($acc['photo2'])) {
 
         <?php if ($beforeFull): ?>
           <div class="photo-item">
-            <div class="photo-label">Before Documentation</div>
-            <a href="<?= htmlspecialchars($beforeFull) ?>" target="_blank">
-                <img src="<?= htmlspecialchars($beforeFull) ?>" alt="Before Photo" class="event-photo">
-            </a>
+            <div class="photo-label">Attachment 1 (Before)</div>
+            <?php if ($beforeIsImage): ?>
+              <a href="<?= htmlspecialchars($beforeFull) ?>" target="_blank">
+                  <img src="<?= htmlspecialchars($beforeFull) ?>" alt="Before Attachment" class="event-photo">
+              </a>
+            <?php else: ?>
+              <a href="<?= htmlspecialchars($beforeFull) ?>" target="_blank" class="btn btn-outline-primary btn-sm">
+                  <i class="fas fa-paperclip me-1"></i>Open Attachment
+              </a>
+            <?php endif; ?>
           </div>
         <?php endif; ?>
 
         <?php if ($afterFull): ?>
           <div class="photo-item">
-            <div class="photo-label">After Documentation</div>
-            <a href="<?= htmlspecialchars($afterFull) ?>" target="_blank">
-                <img src="<?= htmlspecialchars($afterFull) ?>" alt="After Photo" class="event-photo">
-            </a>
+            <div class="photo-label">Attachment 2 (After)</div>
+            <?php if ($afterIsImage): ?>
+              <a href="<?= htmlspecialchars($afterFull) ?>" target="_blank">
+                  <img src="<?= htmlspecialchars($afterFull) ?>" alt="After Attachment" class="event-photo">
+              </a>
+            <?php else: ?>
+              <a href="<?= htmlspecialchars($afterFull) ?>" target="_blank" class="btn btn-outline-primary btn-sm">
+                  <i class="fas fa-paperclip me-1"></i>Open Attachment
+              </a>
+            <?php endif; ?>
           </div>
         <?php endif; ?>
 

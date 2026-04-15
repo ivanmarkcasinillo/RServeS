@@ -716,6 +716,26 @@ if ($stmt) {
     $stmt->close();
 }
 
+$announcements = [];
+$announcement_table_check = $conn->query("SHOW TABLES LIKE 'student_announcements'");
+if ($announcement_table_check instanceof mysqli_result && $announcement_table_check->num_rows > 0) {
+    $stmt = $conn->prepare("
+        SELECT announcement_id, subject, message, created_at
+        FROM student_announcements
+        WHERE student_id = ?
+        ORDER BY created_at DESC
+    ");
+    if ($stmt) {
+        $stmt->bind_param("i", $student_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $announcements[] = $row;
+        }
+        $stmt->close();
+    }
+}
+
 // Prepare Notifications
 $notifications = [];
 foreach ($tasks as $task) {
@@ -731,6 +751,23 @@ foreach ($tasks as $task) {
         'message' => 'New Task: ' . $task['title'],
         'date' => $task['created_at'],
         'target_view' => 'tasks',
+        'certificate_code' => null
+    ];
+}
+foreach ($announcements as $announcement) {
+    $is_read = isset($read_notifications['announcement_' . $announcement['announcement_id']]);
+    if ($is_read) {
+        continue;
+    }
+
+    $notifications[] = [
+        'id' => $announcement['announcement_id'],
+        'key' => 'announcement-' . $announcement['announcement_id'],
+        'type' => 'announcement',
+        'message' => $announcement['subject'],
+        'details' => $announcement['message'],
+        'date' => $announcement['created_at'],
+        'target_view' => 'notifications',
         'certificate_code' => null
     ];
 }
@@ -1152,21 +1189,18 @@ if (isset($_GET['view']) && in_array($_GET['view'], $allowed_dashboard_views, tr
         .modal {
             z-index: 1055;
         }
-        #addAccomplishmentModal .modal-dialog {
-            margin-top: 72px;
-            max-width: 600px;
-        }
         .modal-content {
-            background: rgba(255, 255, 255, 0.9);
+            background: var(--rserve-surface);
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+            border: 1px solid var(--rserve-border);
+            box-shadow: var(--rserve-shadow);
+            border-radius: 28px;
         }
         .modal-header {
-            background: linear-gradient(90deg, rgba(29, 110, 160, 0.9), rgba(13, 60, 97, 0.95));
+            background: linear-gradient(135deg, var(--rserve-primary) 0%, var(--rserve-primary-deep) 100%);
             color: white;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            border-bottom: 1px solid var(--rserve-border);
         }
         .btn-close-white {
             filter: invert(1) grayscale(100%) brightness(200%);
@@ -2707,12 +2741,17 @@ if (isset($_GET['view']) && in_array($_GET['view'], $allowed_dashboard_views, tr
                                 <div class="me-1 mt-1">
                                     <?php if($notif['type'] === 'task'): ?>
                                         <i class="fas fa-tasks text-primary"></i>
+                                    <?php elseif($notif['type'] === 'announcement'): ?>
+                                        <i class="fas fa-bullhorn text-info"></i>
                                     <?php elseif($notif['type'] === 'certificate'): ?>
                                         <i class="fas fa-certificate text-warning"></i>
                                     <?php endif; ?>
                                 </div>
                                 <div class="flex-grow-1" style="white-space: normal; line-height: 1.3;">
                                     <div class="small fw-bold"><?= htmlspecialchars($notif['message']) ?></div>
+                                    <?php if (!empty($notif['details'])): ?>
+                                        <div class="text-muted" style="font-size: 0.75rem;"><?= htmlspecialchars($notif['details']) ?></div>
+                                    <?php endif; ?>
                                     <div class="text-muted" style="font-size: 0.75rem;"><?= date('M d, h:i A', strtotime($notif['date'])) ?></div>
                                 </div>
                             </div>
@@ -3196,6 +3235,14 @@ if (isset($_GET['view']) && in_array($_GET['view'], $allowed_dashboard_views, tr
                                                                                         <h6 class="mb-0 fw-bold">New Task Assigned</h6>
                                                                                         <small class="text-muted">Task</small>
                                                                                     </div>
+                                                                                <?php elseif($notif['type'] === 'announcement'): ?>
+                                                                                    <div class="bg-info text-dark rounded-circle d-flex align-items-center justify-content-center me-3" style="width: 40px; height: 40px;">
+                                                                                        <i class="fas fa-bullhorn"></i>
+                                                                                    </div>
+                                                                                    <div>
+                                                                                        <h6 class="mb-0 fw-bold">Announcement</h6>
+                                                                                        <small class="text-muted">Adviser</small>
+                                                                                    </div>
                                                                                 <?php elseif($notif['type'] === 'certificate'): ?>
                                                                                     <div class="bg-warning text-white rounded-circle d-flex align-items-center justify-content-center me-3" style="width: 40px; height: 40px;">
                                                                                         <i class="fas fa-certificate"></i>
@@ -3217,6 +3264,9 @@ if (isset($_GET['view']) && in_array($_GET['view'], $allowed_dashboard_views, tr
                                                                             <small class="text-muted"><?= date('M d, h:i A', strtotime($notif['date'])) ?></small>
                                                                         </div>
                                                                         <p class="mb-0 ms-5 ps-2 text-dark"><?= htmlspecialchars($notif['message']) ?></p>
+                                                                        <?php if (!empty($notif['details'])): ?>
+                                                                            <p class="mb-0 ms-5 ps-2 text-muted small"><?= htmlspecialchars($notif['details']) ?></p>
+                                                                        <?php endif; ?>
                                                                     </div>
                                                                     <div class="d-flex flex-wrap gap-2 ms-lg-3">
                                                                         <button
@@ -3443,7 +3493,7 @@ if (isset($_GET['view']) && in_array($_GET['view'], $allowed_dashboard_views, tr
 
 <!-- Create Verbal Task Modal -->
 <div class="modal fade" id="verbalTaskModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Create Verbal Task</h5>

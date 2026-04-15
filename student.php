@@ -374,6 +374,15 @@ $total_pending_org += $cnt_org_accomps;
   --shadow: 0 8px 32px rgba(0,0,0,0.1);
   --border-radius: 16px;
   --transition: all 0.3s ease;
+  --rserve-primary: #153f7a;
+  --rserve-primary-deep: #0c2e60;
+  --rserve-primary-soft: #e9f0fb;
+  --rserve-surface: #ffffff;
+  --rserve-surface-alt: #f6f9fe;
+  --rserve-ink: #0f172a;
+  --rserve-muted: #64748b;
+  --rserve-border: #d9e4f3;
+  --rserve-shadow: 0 22px 50px rgba(15, 30, 60, 0.08);
 }
 html {
   font-size: 16px;
@@ -686,10 +695,7 @@ body::before {
   color: var(--primary);
 }
 
-.modal-header {
-  background: linear-gradient(90deg, var(--primary), var(--secondary));
-  color: white;
-}
+
 
 .modal-title {
   font-size: 1.25rem;
@@ -1255,7 +1261,7 @@ body::before {
 <!-- Add Accomplishment Modal -->
 <?php if (!in_array($_SESSION['role'], ['Coordinator', 'Instructor'])): ?>
 <div class="modal fade" id="addAccomplishmentModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">➕ Submit to Adviser</h5>

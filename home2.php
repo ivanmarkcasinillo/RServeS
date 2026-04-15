@@ -55,6 +55,45 @@ if (!function_exists('setAuthFlashMessage')) {
     }
 }
 
+if (!function_exists('rserves_auth_ensure_student_login_history_table')) {
+    function rserves_auth_ensure_student_login_history_table(mysqli $conn): void
+    {
+        $conn->query("
+            CREATE TABLE IF NOT EXISTS student_login_history (
+                login_id INT AUTO_INCREMENT PRIMARY KEY,
+                student_id INT NOT NULL,
+                login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ip_address VARCHAR(45) DEFAULT NULL,
+                user_agent VARCHAR(255) DEFAULT NULL,
+                INDEX idx_student_login_history_student (student_id),
+                INDEX idx_student_login_history_login_at (login_at)
+            )
+        ");
+    }
+}
+
+if (!function_exists('rserves_auth_record_student_login')) {
+    function rserves_auth_record_student_login(mysqli $conn, int $studentId): void
+    {
+        if ($studentId <= 0) {
+            return;
+        }
+
+        rserves_auth_ensure_student_login_history_table($conn);
+
+        $ipAddress = substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);
+        $userAgent = substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
+        $stmt = $conn->prepare("INSERT INTO student_login_history (student_id, ip_address, user_agent) VALUES (?, ?, ?)");
+        if (!$stmt) {
+            return;
+        }
+
+        $stmt->bind_param("iss", $studentId, $ipAddress, $userAgent);
+        $stmt->execute();
+        $stmt->close();
+    }
+}
+
 if (!function_exists('sendSignupVerificationOtp')) {
     function sendSignupVerificationOtp($signupData, $otpLifetime)
     {
@@ -261,6 +300,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $_POST['action'] === 'signin') {
                 switch ($info['role']) {
                     case "Student":
                         $_SESSION['stud_id'] = $row['stud_id'];
+                        rserves_auth_record_student_login($conn, intval($row['stud_id'] ?? 0));
                         break;
                     case "Instructor":
                         $_SESSION['inst_id'] = $row['inst_id'];
@@ -405,6 +445,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $_POST['action'] === 'verify_otp') 
             $_SESSION['lastname'] = $data['lastname'];
             $_SESSION['logged_in'] = true;
             $_SESSION['stud_id'] = $newId;
+            rserves_auth_record_student_login($conn, intval($newId));
 
             // Clean up session
             unset($_SESSION['otp']);

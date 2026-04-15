@@ -12,6 +12,35 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Instructor' || $_SE
     exit;
 }
 
+function rserves_instructor_dashboard_is_ajax_request(): bool
+{
+    return (isset($_POST['ajax']) && $_POST['ajax'] === '1')
+        || strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest';
+}
+
+function rserves_instructor_dashboard_respond(bool $success, string $message): void
+{
+    if (rserves_instructor_dashboard_is_ajax_request()) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => $success,
+            'message' => $message,
+            'type' => $success ? 'success' : 'danger',
+        ]);
+        exit;
+    }
+
+    header(
+        "Location: "
+        . $_SERVER['PHP_SELF']
+        . "?msg="
+        . urlencode($message)
+        . "&msg_type="
+        . urlencode($success ? 'success' : 'danger')
+    );
+    exit;
+}
+
 // Auto-migration: Add is_deleted column to tasks if it doesn't exist
 $check_col = $conn->query("SHOW COLUMNS FROM tasks LIKE 'is_deleted'");
 if ($check_col && $check_col->num_rows == 0) {
@@ -23,6 +52,9 @@ $check_col_app = $conn->query("SHOW COLUMNS FROM accomplishment_reports LIKE 'ap
 if ($check_col_app && $check_col_app->num_rows == 0) {
     $conn->query("ALTER TABLE accomplishment_reports ADD COLUMN approver_id INT NULL DEFAULT NULL");
 }
+
+rserves_instructor_ensure_task_due_date_column($conn);
+rserves_instructor_ensure_student_task_meta_columns($conn);
 
 $email = $_SESSION['email'];
 
@@ -106,7 +138,7 @@ if (isset($_POST['update_advisory'])) {
     $check_res = $check_stmt->get_result();
 
     if ($check_res && $check_res->num_rows > 0) {
-        header("Location: " . $_SERVER['PHP_SELF'] . "?msg=" . urlencode("❌ Error: Section $new_section already has an adviser. Only 1 adviser per section is allowed."));
+        header("Location: " . $_SERVER['PHP_SELF'] . "?msg=" . urlencode("âŒ Error: Section $new_section already has an adviser. Only 1 adviser per section is allowed."));
         exit;
     }
     $check_stmt->close();
@@ -124,7 +156,7 @@ if (isset($_POST['update_advisory'])) {
         $ins_stmt->execute();
         $ins_stmt->close();
 
-        // ✅ Automatic Linking: Link all students in this section/department to this instructor
+        // âœ… Automatic Linking: Link all students in this section/department to this instructor
         $link_stmt = $conn->prepare("UPDATE students SET instructor_id = ? WHERE section = ? AND department_id = ?");
         $link_stmt->bind_param("isi", $inst_id, $new_section, $dept_id);
         $link_stmt->execute();
@@ -163,16 +195,16 @@ if (isset($_POST['change_password'])) {
             $up = $conn->prepare("UPDATE instructors SET password = ? WHERE inst_id = ?");
             $up->bind_param("si", $hashed_password, $inst_id);
             if ($up->execute()) {
-                $msg = "✅ Password changed successfully!";
+                $msg = "âœ… Password changed successfully!";
             } else {
-                $msg = "❌ Error updating password.";
+                $msg = "âŒ Error updating password.";
             }
             $up->close();
         } else {
-            $msg = "❌ New passwords do not match.";
+            $msg = "âŒ New passwords do not match.";
         }
     } else {
-        $msg = "❌ Current password is incorrect.";
+        $msg = "âŒ Current password is incorrect.";
     }
     header("Location: " . $_SERVER['PHP_SELF'] . "?msg=" . urlencode($msg));
     exit;
@@ -183,23 +215,31 @@ if (isset($_POST['create_task'])) {
     $title       = trim($_POST['title']);
     $description = trim($_POST['description']);
     $duration    = $_POST['duration'];
+    $due_date    = trim((string) ($_POST['due_date'] ?? ''));
     $selected    = $_POST['send_to'] ?? [];
     $fixed_dept_id = 2;
     $created_by_student = 0;
     $task_message = "Task created successfully" . (!empty($selected) ? " and sent!" : "!");
+    $due_date_value = null;
+
+    if ($due_date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $due_date)) {
+        rserves_instructor_dashboard_respond(false, "Please select a valid due date.");
+    }
+
+    $due_date_value = $due_date;
 
     try {
         $conn->begin_transaction();
 
         $tstmt = $conn->prepare("
-            INSERT INTO tasks (title, description, duration, instructor_id, department_id, created_by_student)
-            VALUES (?,?,?,?,?,?)
+            INSERT INTO tasks (title, description, duration, due_date, instructor_id, department_id, created_by_student)
+            VALUES (?,?,?,?,?,?,?)
         ");
         if (!$tstmt) {
             throw new RuntimeException($conn->error);
         }
 
-        $tstmt->bind_param("sssiii", $title, $description, $duration, $inst_id, $fixed_dept_id, $created_by_student);
+        $tstmt->bind_param("ssssiii", $title, $description, $duration, $due_date_value, $inst_id, $fixed_dept_id, $created_by_student);
         if (!$tstmt->execute()) {
             $tstmt_error = $tstmt->error;
             $tstmt->close();
@@ -254,7 +294,7 @@ if (isset($_POST['create_task'])) {
                     $to = $student['email'];
                     $name = $student['firstname'] . ' ' . $student['lastname'];
                     $subject = "New Task Assigned: $title";
-                    $body = "Hello $name,\n\nA new task has been assigned to you by your adviser ($fullname).\n\nTask: $title\nDescription: $description\n\nPlease log in to your dashboard to view details.";
+                    $body = "Hello $name,\n\nA new task has been assigned to you by your adviser ($fullname).\n\nTask: $title\nDescription: $description\nDue Date: " . date('F d, Y', strtotime($due_date_value)) . "\n\nPlease log in to your dashboard to view details.";
                     sendEmail($to, $name, $subject, $body);
                 }
             }
@@ -265,8 +305,7 @@ if (isset($_POST['create_task'])) {
         }
     }
 
-    header("Location: ".$_SERVER['PHP_SELF']."?msg=".urlencode($task_message));
-    exit;
+    rserves_instructor_dashboard_respond($task_message !== "Task creation failed. Please try again.", $task_message);
 }
 
 /* -------------------  EDIT TASK ------------------- */
@@ -275,14 +314,18 @@ if (isset($_POST['edit_task'])) {
     $new_title = trim($_POST['edit_title']);
     $new_desc  = trim($_POST['edit_description']);
     $new_duration = $_POST['edit_duration'];
+    $new_due_date = trim((string) ($_POST['edit_due_date'] ?? ''));
 
-    $stmt = $conn->prepare("UPDATE tasks SET title=?, description=?, duration=? WHERE task_id=? AND instructor_id=?");
-    $stmt->bind_param("sssii", $new_title, $new_desc, $new_duration, $task_id, $inst_id);
+    if ($new_due_date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $new_due_date)) {
+        rserves_instructor_dashboard_respond(false, "Please select a valid due date.");
+    }
+
+    $stmt = $conn->prepare("UPDATE tasks SET title=?, description=?, duration=?, due_date=? WHERE task_id=? AND instructor_id=?");
+    $stmt->bind_param("ssssii", $new_title, $new_desc, $new_duration, $new_due_date, $task_id, $inst_id);
     $stmt->execute();
     $stmt->close();
 
-    header("Location: ".$_SERVER['PHP_SELF']."?msg=".urlencode("Task updated successfully!"));
-    exit;
+    rserves_instructor_dashboard_respond(true, "Task updated successfully!");
 }
 
 /* -------------------  DELETE TASK ------------------- */
@@ -297,8 +340,7 @@ if (isset($_POST['delete_task'])) {
     $up2->execute();
     $up2->close();
 
-    header("Location: ".$_SERVER['PHP_SELF']."?msg=".urlencode("Task hidden successfully!"));
-    exit;
+    rserves_instructor_dashboard_respond(true, "Task hidden successfully!");
 }
 
 /* -------------------  APPROVE/REJECT ORGANIZATION REQUESTS ------------------- */
@@ -308,122 +350,52 @@ if (isset($_POST['delete_task'])) {
 // Removed as per user request
 
 /* -------------------  APPROVE/REJECT STUDENT ACCOMPLISHMENTS (ADVISORY) ------------------- */
+if (isset($_POST['bulk_approve_accomp'])) {
+    $bulk_ids = $_POST['ar_ids'] ?? [];
+    if (!is_array($bulk_ids)) {
+        $bulk_ids = explode(',', (string) $bulk_ids);
+    }
+
+    $result = rserves_instructor_bulk_approve_accomplishments($conn, $inst_id, $bulk_ids);
+    rserves_instructor_dashboard_respond($result['success'], $result['message']);
+}
+
+if (isset($_POST['send_bulk_announcement'])) {
+    $subject = trim((string) ($_POST['announcement_subject'] ?? ''));
+    $message = trim((string) ($_POST['announcement_message'] ?? ''));
+    $result = rserves_instructor_send_bulk_announcement($conn, $inst_id, 2, $fullname, $subject, $message);
+    rserves_instructor_dashboard_respond($result['success'], $result['message']);
+}
+
+if (isset($_POST['remind_task'])) {
+    $task_id = intval($_POST['task_id'] ?? 0);
+    $result = rserves_instructor_send_task_reminders($conn, $inst_id, $task_id, $fullname);
+    rserves_instructor_dashboard_respond($result['success'], $result['message']);
+}
+
+if (isset($_POST['duplicate_task'])) {
+    $task_id = intval($_POST['task_id'] ?? 0);
+    $result = rserves_instructor_duplicate_task($conn, $inst_id, $task_id, $fullname);
+    rserves_instructor_dashboard_respond($result['success'], $result['message']);
+}
+
+if (isset($_POST['reassign_task_assignment'])) {
+    $student_task_id = intval($_POST['student_task_id'] ?? 0);
+    $new_student_id = intval($_POST['new_student_id'] ?? 0);
+    $result = rserves_instructor_reassign_task($conn, $inst_id, $student_task_id, $new_student_id, $fullname);
+    rserves_instructor_dashboard_respond($result['success'], $result['message']);
+}
+
 if (isset($_POST['approve_accomp'])) {
     $ar_id = intval($_POST['ar_id']);
-    $message = "Accomplishment approved!";
-
-    try {
-        $conn->begin_transaction();
-
-        $stmt = $conn->prepare("UPDATE accomplishment_reports SET status='Approved', approver_id=? WHERE id=?");
-        if (!$stmt) {
-            throw new RuntimeException($conn->error);
-        }
-
-        $stmt->bind_param("ii", $inst_id, $ar_id);
-        if (!$stmt->execute()) {
-            $stmt_error = $stmt->error;
-            $stmt->close();
-            throw new RuntimeException($stmt_error);
-        }
-        $stmt->close();
-
-        rserves_instructor_sync_accomplishment_student_tasks($conn, $ar_id);
-        $conn->commit();
-    } catch (Throwable $e) {
-        $conn->rollback();
-        error_log("Instructor accomplishment approval failed for report {$ar_id}: " . $e->getMessage());
-        $message = "Accomplishment approval failed. Please try again.";
-    }
-
-    if ($message === "Accomplishment approved!") {
-        $notify_stmt = $conn->prepare("SELECT student_id, activity, work_date FROM accomplishment_reports WHERE id = ? LIMIT 1");
-        if ($notify_stmt) {
-            $notify_stmt->bind_param("i", $ar_id);
-            $notify_stmt->execute();
-            $notify_row = $notify_stmt->get_result()->fetch_assoc();
-            $notify_stmt->close();
-
-            if (!empty($notify_row['student_id'])) {
-                $student = rserves_fetch_student_email_recipient($conn, intval($notify_row['student_id']));
-                if ($student) {
-                    $activity_label = trim((string) preg_replace('/\[\s*TaskID\s*:\s*\d+\s*\]/i', '', (string) ($notify_row['activity'] ?? '')));
-                    $body = rserves_notification_build_body(
-                        rserves_notification_recipient_name($student),
-                        "Your accomplishment report was approved.",
-                        [
-                            'Work Date' => (string) ($notify_row['work_date'] ?? ''),
-                            'Activity' => $activity_label !== '' ? $activity_label : 'RSS accomplishment',
-                            'Status' => 'Approved',
-                        ]
-                    );
-                    rserves_send_bulk_notification_email([$student], 'Accomplishment Approved', $body);
-                }
-            }
-        }
-    }
-
-    header("Location: ".$_SERVER['PHP_SELF']."?msg=".urlencode($message));
-    exit;
+    $result = rserves_instructor_update_accomplishment_status($conn, $inst_id, $ar_id, 'Approved');
+    rserves_instructor_dashboard_respond($result['success'], $result['message']);
 }
 
 if (isset($_POST['reject_accomp'])) {
     $ar_id = intval($_POST['ar_id']);
-    $message = "Accomplishment rejected!";
-
-    try {
-        $conn->begin_transaction();
-
-        $stmt = $conn->prepare("UPDATE accomplishment_reports SET status='Rejected' WHERE id=?");
-        if (!$stmt) {
-            throw new RuntimeException($conn->error);
-        }
-
-        $stmt->bind_param("i", $ar_id);
-        if (!$stmt->execute()) {
-            $stmt_error = $stmt->error;
-            $stmt->close();
-            throw new RuntimeException($stmt_error);
-        }
-        $stmt->close();
-
-        rserves_instructor_sync_accomplishment_student_tasks($conn, $ar_id);
-        $conn->commit();
-    } catch (Throwable $e) {
-        $conn->rollback();
-        error_log("Instructor accomplishment rejection failed for report {$ar_id}: " . $e->getMessage());
-        $message = "Accomplishment rejection failed. Please try again.";
-    }
-
-    if ($message === "Accomplishment rejected!") {
-        $notify_stmt = $conn->prepare("SELECT student_id, activity, work_date FROM accomplishment_reports WHERE id = ? LIMIT 1");
-        if ($notify_stmt) {
-            $notify_stmt->bind_param("i", $ar_id);
-            $notify_stmt->execute();
-            $notify_row = $notify_stmt->get_result()->fetch_assoc();
-            $notify_stmt->close();
-
-            if (!empty($notify_row['student_id'])) {
-                $student = rserves_fetch_student_email_recipient($conn, intval($notify_row['student_id']));
-                if ($student) {
-                    $activity_label = trim((string) preg_replace('/\[\s*TaskID\s*:\s*\d+\s*\]/i', '', (string) ($notify_row['activity'] ?? '')));
-                    $body = rserves_notification_build_body(
-                        rserves_notification_recipient_name($student),
-                        "Your accomplishment report was rejected.",
-                        [
-                            'Work Date' => (string) ($notify_row['work_date'] ?? ''),
-                            'Activity' => $activity_label !== '' ? $activity_label : 'RSS accomplishment',
-                            'Status' => 'Rejected',
-                        ]
-                    );
-                    rserves_send_bulk_notification_email([$student], 'Accomplishment Rejected', $body);
-                }
-            }
-        }
-    }
-
-    header("Location: ".$_SERVER['PHP_SELF']."?msg=".urlencode($message));
-    exit;
+    $result = rserves_instructor_update_accomplishment_status($conn, $inst_id, $ar_id, 'Rejected');
+    rserves_instructor_dashboard_respond($result['success'], $result['message']);
 }
 
 /* -------------------  MARK ALL NOTIFICATIONS AS READ (Moved to external file) ------------------- */
@@ -439,6 +411,7 @@ SELECT
   s.mi,
   s.lastname,
   s.email,
+  s.student_number,
   s.photo,
   COALESCE(s.year_level, 1) AS year_level,
   COALESCE(s.section, 'A') AS section,
@@ -495,7 +468,7 @@ if (!empty($advisory_sections)) {
     $sections_in = "'" . implode("','", $advisory_sections) . "'";
     $sql_adv_stud = "
         SELECT 
-          s.stud_id, s.firstname, s.mi, s.lastname, s.email, s.photo,
+          s.stud_id, s.firstname, s.mi, s.lastname, s.email, s.student_number, s.photo,
           COALESCE(s.year_level, 1) AS year_level,
           COALESCE(s.section, 'A') AS section,
           COALESCE(ar_sum.hours, 0) AS completed_hours
@@ -586,6 +559,7 @@ $res2 = $conn->query("
     t.task_id,
     t.title,
     t.description,
+    t.due_date,
     t.created_at
 FROM student_tasks st
 JOIN tasks t ON st.task_id = t.task_id
@@ -609,6 +583,7 @@ $resTasks = $conn->query("
     st.status,
     t.title,
     t.description,
+    t.due_date,
     t.created_at
 FROM student_tasks st
 JOIN tasks t ON st.task_id = t.task_id
@@ -625,11 +600,15 @@ if ($resTasks) {
 $allStudentAccomps = [];
 $resAccomps = $conn->query("
     SELECT 
+        id,
         student_id, 
         work_date, 
         activity, 
+        time_start,
+        time_end,
         hours, 
-        status 
+        status,
+        created_at
     FROM accomplishment_reports 
     ORDER BY work_date DESC
 ");
@@ -668,11 +647,16 @@ $mt_stmt->close();
 $taskAssignments = [];
 $ta_res = $conn->query("
     SELECT 
+        st.stask_id,
         st.task_id,
         st.student_id,
         st.status as assignment_status,
+        st.assigned_at,
+        st.completed_at,
+        s.student_number,
         s.firstname,
         s.lastname,
+        s.email,
         s.section,
         s.year_level
     FROM student_tasks st
@@ -1001,8 +985,8 @@ if ($notifs_query) {
         }
 
         @keyframes rservePageFadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
 
         .rserve-page-loader {
@@ -1065,18 +1049,74 @@ if ($notifs_query) {
             .rserve-page-loader__spinner { animation: none; }
         }
 
-        /* Keep the Create Task modal usable on shorter viewports/live hosts */
-        #createTaskModal .modal-dialog {
-            margin: 1rem auto;
+        .modal {
+            --rserve-modal-gap: clamp(0.75rem, 2vh, 1.5rem);
         }
 
-        #createTaskModal .modal-content {
-            max-height: calc(100vh - 2rem);
+        .modal .modal-dialog {
+            margin: var(--rserve-modal-gap) auto;
+            width: calc(100vw - (var(--rserve-modal-gap) * 2));
+            max-width: min(var(--bs-modal-width, 500px), calc(100vw - (var(--rserve-modal-gap) * 2)));
         }
 
-        #createTaskModal .modal-body {
+        .modal .modal-dialog.modal-dialog-centered {
+            min-height: calc(100vh - (var(--rserve-modal-gap) * 2));
+            min-height: calc(100dvh - (var(--rserve-modal-gap) * 2));
+        }
+
+        .modal .modal-content {
+            max-height: calc(100vh - (var(--rserve-modal-gap) * 2));
+            max-height: calc(100dvh - (var(--rserve-modal-gap) * 2));
+            overflow: hidden;
+        }
+
+        .modal .modal-body {
             overflow-y: auto;
-            max-height: calc(100vh - 210px);
+            overscroll-behavior: contain;
+        }
+
+        .modal-table-shell {
+            border: 1px solid rgba(18, 55, 85, 0.08);
+            border-radius: 14px;
+        }
+
+        .modal-table-pagination {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-top: 0.9rem;
+        }
+
+        .modal-table-pagination__summary {
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+
+        .modal-table-pagination__controls {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 0.45rem;
+            flex-wrap: wrap;
+        }
+
+        .modal-table-pagination__page {
+            color: var(--secondary-color);
+            font-size: 0.9rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 575.98px) {
+            .modal-table-pagination {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .modal-table-pagination__controls {
+                justify-content: space-between;
+            }
         }
 
     </style>
@@ -1220,12 +1260,6 @@ if ($notifs_query) {
         </nav>
 
         <div class="container-fluid" id="main-content">
-            <?php if (isset($_GET['msg'])): ?>
-                <div class="alert alert-info alert-dismissible fade show mt-3" role="alert">
-                    <?php echo htmlspecialchars($_GET['msg']); ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
-            <?php endif; ?>
             <!-- Content rendered via JS -->
         </div>
     </div>
@@ -1310,9 +1344,9 @@ function togglePasswordVisibility(icon, fieldId) {
 
 <!-- Create Task Modal -->
 <div class="modal fade" id="createTaskModal" tabindex="-1">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
         <div class="modal-content">
-            <form action="<?php echo $_SERVER['PHP_SELF']; ?>" method="POST">
+            <form action="<?php echo $_SERVER['PHP_SELF']; ?>" method="POST" id="createTaskForm">
                 <div class="modal-header">
                     <h5 class="modal-title">Create New Task</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -1376,12 +1410,57 @@ function togglePasswordVisibility(icon, fieldId) {
                     </div>
 
                     <div class="mb-3">
+                        <label class="form-label fw-bold">Due Date</label>
+                        <input type="date" name="due_date" class="form-control" required>
+                    </div>
+
+                    <div class="mb-3">
                         <label class="form-label">Description</label>
                         <textarea name="description" class="form-control" rows="3" required></textarea>
                     </div>
                     
                     <div class="mb-3">
                         <label class="form-label">Assign To Students</label>
+                        <div class="row g-2 mb-3">
+                            <div class="col-lg-4">
+                                <label for="studentSelectionSearch" class="form-label small text-muted mb-1">Search Student</label>
+                                <input
+                                    type="search"
+                                    id="studentSelectionSearch"
+                                    class="form-control"
+                                    placeholder="Search by student name or email"
+                                    oninput="studentSelectionSearch = this.value; populateStudentSelection();"
+                                >
+                            </div>
+                            <div class="col-sm-6 col-lg-3">
+                                <label for="studentSelectionYearFilter" class="form-label small text-muted mb-1">Year Level</label>
+                                <select
+                                    id="studentSelectionYearFilter"
+                                    class="form-select"
+                                    onchange="studentSelectionYearFilter = this.value; studentSelectionSectionFilter = ''; populateStudentSelection();"
+                                >
+                                    <option value="">All Year Levels</option>
+                                </select>
+                            </div>
+                            <div class="col-sm-6 col-lg-3">
+                                <label for="studentSelectionSectionFilter" class="form-label small text-muted mb-1">Section</label>
+                                <select
+                                    id="studentSelectionSectionFilter"
+                                    class="form-select"
+                                    onchange="studentSelectionSectionFilter = this.value; populateStudentSelection();"
+                                >
+                                    <option value="">All Sections</option>
+                                </select>
+                            </div>
+                            <div class="col-lg-2 d-grid align-items-end">
+                                <button type="button" class="btn btn-outline-secondary" onclick="clearStudentSelectionFilters()">Clear</button>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                            <div id="studentSelectionSummary" class="small text-muted">Showing 0 students. 0 selected.</div>
+                            <div class="small text-muted">Selections stay saved while you filter the list.</div>
+                        </div>
+                        <div id="selectedStudentsHiddenInputs"></div>
                         <div class="accordion" id="studentAccordion">
                             <!-- Populated by JS -->
                         </div>
@@ -1398,9 +1477,9 @@ function togglePasswordVisibility(icon, fieldId) {
 
 <!-- Edit Task Modal -->
 <div class="modal fade" id="editTaskModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
-            <form action="<?php echo $_SERVER['PHP_SELF']; ?>" method="POST">
+            <form action="<?php echo $_SERVER['PHP_SELF']; ?>" method="POST" id="editTaskForm">
                 <input type="hidden" name="task_id" id="edit_task_id">
                 <div class="modal-header">
                     <h5 class="modal-title">Edit Task</h5>
@@ -1423,6 +1502,11 @@ function togglePasswordVisibility(icon, fieldId) {
                     </div>
 
                     <div class="mb-3">
+                        <label class="form-label fw-bold">Due Date</label>
+                        <input type="date" name="edit_due_date" id="edit_task_due_date" class="form-control" required>
+                    </div>
+
+                    <div class="mb-3">
                         <label class="form-label">Description</label>
                         <textarea name="edit_description" id="edit_task_desc" class="form-control" rows="3" required></textarea>
                     </div>
@@ -1438,7 +1522,7 @@ function togglePasswordVisibility(icon, fieldId) {
 
 <!-- Student Details Modal -->
 <div class="modal fade" id="studentDetailsModal" tabindex="-1">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="studentDetailsTitle">Student Details</h5>
@@ -1466,18 +1550,39 @@ function togglePasswordVisibility(icon, fieldId) {
     </div>
 </div>
 
+<!-- End Session Confirmation Modal -->
+<div class="modal fade" id="endSessionConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="fas fa-user-lock me-2"></i>Confirm End Session</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2">This will archive the student's RSS session and prevent accidental completion mistakes.</p>
+                <p class="fw-bold mb-0" id="endSessionStudentName">Selected student</p>
+                <input type="hidden" id="endSessionStudentId">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmEndSessionBtn">End Session</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Organization Details Modal Removed -->
 
 <!-- Import Master List Modal -->
 <div class="modal fade" id="importMasterModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Import Master Student List</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <form action="import_master_list.php" method="POST" enctype="multipart/form-data">
+                <form action="import_master_list.php" method="POST" enctype="multipart/form-data" data-loading-label="Uploading...">
                     <div class="mb-3">
                         <label for="csv_file" class="form-label">Upload CSV File</label>
                         <input class="form-control" type="file" id="csv_file" name="csv_file" accept=".csv" required>
@@ -1499,13 +1604,70 @@ function togglePasswordVisibility(icon, fieldId) {
 
 <!-- Task Details Modal -->
 <div class="modal fade" id="taskDetailsModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="taskDetailsTitle">Assigned Students</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-lg-4">
+                        <label for="taskAssignmentSearch" class="form-label small text-muted mb-1">Search Student</label>
+                        <input
+                            type="search"
+                            id="taskAssignmentSearch"
+                            class="form-control"
+                            placeholder="Search by student name"
+                            oninput="taskAssignmentSearch = this.value; resetModalTablePage('taskAssignments'); renderTaskAssignmentsList();"
+                        >
+                    </div>
+                    <div class="col-sm-6 col-lg-3">
+                        <label for="taskAssignmentYearFilter" class="form-label small text-muted mb-1">Year Level</label>
+                        <select
+                            id="taskAssignmentYearFilter"
+                            class="form-select"
+                            onchange="taskAssignmentYearFilter = this.value; taskAssignmentSectionFilter = ''; resetModalTablePage('taskAssignments'); renderTaskAssignmentsList();"
+                        >
+                            <option value="">All Year Levels</option>
+                        </select>
+                    </div>
+                    <div class="col-sm-6 col-lg-3">
+                        <label for="taskAssignmentSectionFilter" class="form-label small text-muted mb-1">Section</label>
+                        <select
+                            id="taskAssignmentSectionFilter"
+                            class="form-select"
+                            onchange="taskAssignmentSectionFilter = this.value; resetModalTablePage('taskAssignments'); renderTaskAssignmentsList();"
+                        >
+                            <option value="">All Sections</option>
+                        </select>
+                    </div>
+                    <div class="col-sm-6 col-lg-2">
+                        <label for="taskAssignmentStatusFilter" class="form-label small text-muted mb-1">Status</label>
+                        <select
+                            id="taskAssignmentStatusFilter"
+                            class="form-select"
+                            onchange="taskAssignmentStatusFilter = this.value; resetModalTablePage('taskAssignments'); renderTaskAssignmentsList();"
+                        >
+                            <option value="all">All Statuses</option>
+                            <option value="in progress">In Progress</option>
+                            <option value="completed">Completed</option>
+                            <option value="pending">Pending</option>
+                        </select>
+                    </div>
+                    <div class="col-lg-12 d-grid d-lg-flex justify-content-lg-end align-items-end">
+                        <button type="button" class="btn btn-outline-secondary" onclick="clearTaskAssignmentFilters()">Clear</button>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                    <div id="taskAssignmentsSummary" class="small text-muted mb-0">Showing 0 assigned students.</div>
+                    <form method="POST" action="<?php echo $_SERVER['PHP_SELF']; ?>" data-loading-label="Sending reminders..." onsubmit="return confirm('Send reminders to students who have not yet completed this task?');">
+                        <input type="hidden" name="task_id" id="taskReminderTaskId">
+                        <button type="submit" name="remind_task" class="btn btn-outline-warning btn-sm" id="taskReminderBtn">
+                            <i class="fas fa-bell me-1"></i> Remind All
+                        </button>
+                    </form>
+                </div>
                 <div class="table-responsive">
                     <table class="table table-hover">
                         <thead class="table-light">
@@ -1513,6 +1675,8 @@ function togglePasswordVisibility(icon, fieldId) {
                                 <th>Student Name</th>
                                 <th>Section</th>
                                 <th>Status</th>
+                                <th>Timeline</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody id="taskAssignmentsList">
@@ -1520,10 +1684,74 @@ function togglePasswordVisibility(icon, fieldId) {
                         </tbody>
                     </table>
                 </div>
+                <div id="taskAssignmentsPagination"></div>
             </div>
         </div>
     </div>
 </div>
+
+<div class="modal fade" id="announcementModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="<?php echo $_SERVER['PHP_SELF']; ?>" data-loading-label="Sending announcement..." onsubmit="return confirm('Send this announcement to all advisory students?');">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-bullhorn me-2"></i>Send Announcement</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        This sends both an email and a dashboard notification to your advisory students.
+                    </div>
+                    <div class="mb-3">
+                        <label for="announcementSubject" class="form-label fw-bold">Subject</label>
+                        <input type="text" class="form-control" id="announcementSubject" name="announcement_subject" maxlength="255" required>
+                    </div>
+                    <div class="mb-0">
+                        <label for="announcementMessage" class="form-label fw-bold">Message</label>
+                        <textarea class="form-control" id="announcementMessage" name="announcement_message" rows="5" required></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" name="send_bulk_announcement" class="btn btn-primary">
+                        <i class="fas fa-paper-plane me-1"></i> Send
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="reassignTaskModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" action="<?php echo $_SERVER['PHP_SELF']; ?>" data-loading-label="Reassigning task..." onsubmit="return confirm('Reassign this task to the selected student?');">
+                <input type="hidden" name="student_task_id" id="reassignStudentTaskId">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-random me-2"></i>Reassign Task</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted mb-3" id="reassignTaskContext">Choose a new student for this task assignment.</p>
+                    <div class="mb-0">
+                        <label for="reassignStudentSelect" class="form-label fw-bold">New Student</label>
+                        <select class="form-select" id="reassignStudentSelect" name="new_student_id" required>
+                            <option value="">Select student</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" name="reassign_task_assignment" class="btn btn-primary">
+                        <i class="fas fa-exchange-alt me-1"></i> Reassign
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container position-fixed top-0 end-0 p-3" id="appToastContainer" style="z-index: 1100;"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
@@ -1537,9 +1765,1025 @@ function togglePasswordVisibility(icon, fieldId) {
     const allStudentAccomps = <?php echo json_encode($allStudentAccomps); ?>;
     const myTasks = <?php echo json_encode($myTasks); ?>;
     const taskAssignments = <?php echo json_encode($taskAssignments); ?>;
+    const currentDashboardPath = <?php echo json_encode($_SERVER['PHP_SELF']); ?>;
+    const initialFlashMessage = <?php echo json_encode($_GET['msg'] ?? ''); ?>;
+    const initialFlashType = <?php echo json_encode($_GET['msg_type'] ?? ''); ?>;
     let taskMonthFilter = 'latest';
+    let studentSelectionSearch = '';
+    let studentSelectionYearFilter = '';
+    let studentSelectionSectionFilter = '';
+    const selectedStudentIds = new Set();
+    let activeTaskDetailsId = null;
+    let activeStudentDetailsId = null;
+    let taskAssignmentSearch = '';
+    let taskAssignmentYearFilter = '';
+    let taskAssignmentSectionFilter = '';
+    let taskAssignmentStatusFilter = 'all';
+    const MODAL_TABLE_PAGE_SIZE = 6;
+    const modalTableState = {};
+    let pendingSubmissionDateFrom = '';
+    let pendingSubmissionDateTo = '';
+    let advisoryStudentSearch = '';
+    let classStudentSearch = '';
+    const selectedPendingAccomplishmentIds = new Set();
+    const requiredHours = <?php echo json_encode(rserves_instructor_required_hours()); ?>;
     
 
+    function inferToastType(message, fallback = 'info') {
+        const normalized = String(message || '').toLowerCase();
+
+        if (!normalized) {
+            return fallback;
+        }
+
+        if (
+            normalized.includes('error')
+            || normalized.includes('failed')
+            || normalized.includes('invalid')
+            || normalized.includes('incorrect')
+            || normalized.includes('missing')
+            || normalized.includes('wrong')
+            || normalized.includes('could not')
+            || normalized.includes('cannot')
+        ) {
+            return 'danger';
+        }
+
+        if (normalized.includes('warning')) {
+            return 'warning';
+        }
+
+        if (
+            normalized.includes('success')
+            || normalized.includes('approved')
+            || normalized.includes('created')
+            || normalized.includes('updated')
+            || normalized.includes('hidden')
+            || normalized.includes('sent')
+            || normalized.includes('archived')
+            || normalized.includes('ended')
+        ) {
+            return 'success';
+        }
+
+        return fallback;
+    }
+
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('appToastContainer');
+        if (!container || !message) return;
+
+        const toastEl = document.createElement('div');
+        const variantClass = {
+            success: 'text-bg-success',
+            danger: 'text-bg-danger',
+            warning: 'bg-warning text-dark',
+            info: 'text-bg-primary'
+        }[type] || 'text-bg-primary';
+        const closeButtonClass = type === 'warning' ? 'btn-close' : 'btn-close btn-close-white';
+
+        toastEl.className = `toast align-items-center border-0 ${variantClass}`;
+        toastEl.setAttribute('role', 'alert');
+        toastEl.setAttribute('aria-live', 'assertive');
+        toastEl.setAttribute('aria-atomic', 'true');
+        toastEl.innerHTML = `
+            <div class="d-flex">
+                <div class="toast-body"></div>
+                <button type="button" class="${closeButtonClass} me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        `;
+        toastEl.querySelector('.toast-body').textContent = message;
+
+        container.appendChild(toastEl);
+
+        const toast = new bootstrap.Toast(toastEl, {
+            delay: 3600
+        });
+        toast.show();
+
+        toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
+    }
+
+    function getModalTableState(key, pageSize = MODAL_TABLE_PAGE_SIZE) {
+        if (!modalTableState[key]) {
+            modalTableState[key] = {
+                page: 1,
+                pageSize
+            };
+        }
+
+        modalTableState[key].pageSize = pageSize;
+
+        if (!Number.isInteger(modalTableState[key].page) || modalTableState[key].page < 1) {
+            modalTableState[key].page = 1;
+        }
+
+        return modalTableState[key];
+    }
+
+    function resetModalTablePage(key) {
+        getModalTableState(key).page = 1;
+    }
+
+    function resetModalTablePages(keys) {
+        keys.forEach(resetModalTablePage);
+    }
+
+    function getModalTablePagination(items, key, pageSize = MODAL_TABLE_PAGE_SIZE) {
+        const state = getModalTableState(key, pageSize);
+        const totalItems = Array.isArray(items) ? items.length : 0;
+        const totalPages = Math.max(1, Math.ceil(totalItems / state.pageSize));
+
+        if (state.page > totalPages) {
+            state.page = totalPages;
+        }
+
+        const startIndex = totalItems === 0 ? 0 : (state.page - 1) * state.pageSize;
+        const endIndex = Math.min(startIndex + state.pageSize, totalItems);
+
+        return {
+            currentPage: state.page,
+            items: totalItems === 0 ? [] : items.slice(startIndex, endIndex),
+            pageSize: state.pageSize,
+            startIndex,
+            endIndex,
+            totalItems,
+            totalPages
+        };
+    }
+
+    function renderModalPagination(key, pagination, emptyLabel = 'No records found.') {
+        if (!pagination.totalItems) {
+            return `
+                <div class="modal-table-pagination">
+                    <span class="modal-table-pagination__summary">${emptyLabel}</span>
+                </div>
+            `;
+        }
+
+        const summary = `Showing ${pagination.startIndex + 1}-${pagination.endIndex} of ${pagination.totalItems}`;
+
+        if (pagination.totalPages <= 1) {
+            return `
+                <div class="modal-table-pagination">
+                    <span class="modal-table-pagination__summary">${summary}</span>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="modal-table-pagination">
+                <span class="modal-table-pagination__summary">${summary}</span>
+                <div class="modal-table-pagination__controls">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setModalTablePage('${key}', 1)" ${pagination.currentPage === 1 ? 'disabled' : ''}>First</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setModalTablePage('${key}', ${pagination.currentPage - 1})" ${pagination.currentPage === 1 ? 'disabled' : ''}>Prev</button>
+                    <span class="modal-table-pagination__page">Page ${pagination.currentPage} of ${pagination.totalPages}</span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setModalTablePage('${key}', ${pagination.currentPage + 1})" ${pagination.currentPage === pagination.totalPages ? 'disabled' : ''}>Next</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setModalTablePage('${key}', ${pagination.totalPages})" ${pagination.currentPage === pagination.totalPages ? 'disabled' : ''}>Last</button>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderModalTableCard({
+        key,
+        title,
+        titleClass,
+        badgeClass,
+        badgeLabel,
+        headersHtml,
+        rows,
+        emptyRowHtml,
+        emptyLabel,
+        wrapperClass = 'content-card',
+        tableClass = 'table table-hover align-middle mb-0'
+    }) {
+        const pagination = getModalTablePagination(rows, key);
+        const bodyHtml = pagination.items.length > 0 ? pagination.items.join('') : emptyRowHtml;
+        const badgeMarkup = badgeLabel ? `<span class="badge ${badgeClass} rounded-pill">${badgeLabel}</span>` : '';
+
+        return `
+            <div class="${wrapperClass}">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                    <h6 class="${titleClass} fw-bold mb-0">${title}</h6>
+                    ${badgeMarkup}
+                </div>
+                <div class="table-responsive modal-table-shell">
+                    <table class="${tableClass}">
+                        <thead class="table-light">
+                            <tr>${headersHtml}</tr>
+                        </thead>
+                        <tbody>${bodyHtml}</tbody>
+                    </table>
+                </div>
+                ${renderModalPagination(key, pagination, emptyLabel)}
+            </div>
+        `;
+    }
+
+    function setModalTablePage(key, page) {
+        const state = getModalTableState(key);
+        state.page = Math.max(1, Number(page) || 1);
+
+        if (key === 'taskAssignments') {
+            renderTaskAssignmentsList();
+            return;
+        }
+
+        if (activeStudentDetailsId !== null) {
+            renderStudentDetailsModal(activeStudentDetailsId);
+        }
+    }
+
+    function formatDueDate(dueDate) {
+        if (!dueDate) {
+            return 'No due date';
+        }
+
+        const parsedDate = new Date(`${dueDate}T00:00:00`);
+        if (Number.isNaN(parsedDate.getTime())) {
+            return dueDate;
+        }
+
+        return parsedDate.toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    }
+
+    function formatHours(value) {
+        const parsedValue = Number(value || 0);
+        return Number.isFinite(parsedValue) ? parsedValue.toFixed(2) : '0.00';
+    }
+
+    function getRemainingHours(approvedHours) {
+        return Math.max(Number(requiredHours || 0) - Number(approvedHours || 0), 0);
+    }
+
+    function isNearRequiredHours(approvedHours) {
+        const normalizedRequiredHours = Number(requiredHours || 0);
+        const normalizedApprovedHours = Number(approvedHours || 0);
+
+        if (!normalizedRequiredHours || normalizedApprovedHours >= normalizedRequiredHours) {
+            return false;
+        }
+
+        return normalizedApprovedHours >= (normalizedRequiredHours * 0.9);
+    }
+
+    function calculateApprovedHoursFromAccomplishments(accomplishmentList = []) {
+        return accomplishmentList.reduce((total, accomplishment) => {
+            if (String(accomplishment.status || '').toLowerCase() === 'approved') {
+                return total + Number(accomplishment.hours || 0);
+            }
+
+            return total;
+        }, 0);
+    }
+
+    function formatDateTime(dateValue) {
+        if (!dateValue) {
+            return 'N/A';
+        }
+
+        const parsedDate = new Date(dateValue);
+        if (Number.isNaN(parsedDate.getTime())) {
+            return dateValue;
+        }
+
+        return parsedDate.toLocaleString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    function getStatusBadgeClass(status) {
+        const normalizedStatus = String(status || '').toLowerCase();
+
+        if (normalizedStatus === 'approved' || normalizedStatus === 'completed' || normalizedStatus === 'verified') {
+            return 'bg-success';
+        }
+
+        if (normalizedStatus === 'pending') {
+            return 'bg-warning text-dark';
+        }
+
+        if (normalizedStatus === 'in progress') {
+            return 'bg-info text-dark';
+        }
+
+        if (normalizedStatus === 'rejected') {
+            return 'bg-danger';
+        }
+
+        return 'bg-secondary';
+    }
+
+    function setButtonLoading(button, isLoading, loadingLabel = 'Processing...') {
+        if (!button) return;
+
+        if (isLoading) {
+            if (!button.dataset.originalHtml) {
+                button.dataset.originalHtml = button.innerHTML;
+            }
+
+            button.disabled = true;
+            button.innerHTML = `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>${loadingLabel}`;
+            return;
+        }
+
+        if (button.dataset.originalHtml) {
+            button.innerHTML = button.dataset.originalHtml;
+            delete button.dataset.originalHtml;
+        }
+
+        button.disabled = false;
+    }
+
+    async function markNotificationRead(notificationId) {
+        if (!notificationId) return;
+
+        const notification = notifications.find((item) => String(item.id) === String(notificationId));
+        if (!notification || Number(notification.is_read) === 1) {
+            return;
+        }
+
+        notification.is_read = 1;
+
+        try {
+            await fetch('mark_notification_read.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ notification_id: notificationId })
+            });
+        } catch (error) {
+            // Keep the UI responsive even if the read-state sync fails.
+        }
+    }
+
+    function studentMatchesNameSearch(student, searchTerm) {
+        const normalizedTerm = String(searchTerm || '').trim().toLowerCase();
+        if (!normalizedTerm) {
+            return true;
+        }
+
+        const haystack = [
+            student.firstname,
+            student.mi,
+            student.lastname,
+            `${student.lastname}, ${student.firstname}`,
+            `${student.firstname} ${student.lastname}`,
+            student.email,
+            student.student_number
+        ].join(' ').toLowerCase();
+
+        return haystack.includes(normalizedTerm);
+    }
+
+    function getFilteredAdvisoryStudents() {
+        return advisoryStudentsData.filter(student => studentMatchesNameSearch(student, advisoryStudentSearch));
+    }
+
+    function getFilteredPendingAdvisoryAccomplishments() {
+        const hasInvalidDateRange = pendingSubmissionDateFrom !== ''
+            && pendingSubmissionDateTo !== ''
+            && pendingSubmissionDateFrom > pendingSubmissionDateTo;
+
+        if (hasInvalidDateRange) {
+            return {
+                hasInvalidDateRange: true,
+                items: []
+            };
+        }
+
+        return {
+            hasInvalidDateRange: false,
+            items: pendingAdvisoryAccomps.filter(acc => {
+                const workDate = String(acc.work_date || '').slice(0, 10);
+
+                if (pendingSubmissionDateFrom && workDate < pendingSubmissionDateFrom) {
+                    return false;
+                }
+
+                if (pendingSubmissionDateTo && workDate > pendingSubmissionDateTo) {
+                    return false;
+                }
+
+                return studentMatchesNameSearch(acc, advisoryStudentSearch);
+            })
+        };
+    }
+
+    function refreshStudentCompletedHours(studentId) {
+        const accomplishmentList = allStudentAccomps[studentId] || [];
+        const approvedHours = calculateApprovedHoursFromAccomplishments(accomplishmentList);
+
+        advisoryStudentsData.forEach(student => {
+            if (String(student.stud_id) === String(studentId)) {
+                student.completed_hours = approvedHours;
+            }
+        });
+
+        Object.keys(studentsData).forEach(year => {
+            Object.keys(studentsData[year]).forEach(section => {
+                studentsData[year][section].forEach(student => {
+                    if (String(student.stud_id) === String(studentId)) {
+                        student.completed_hours = approvedHours;
+                    }
+                });
+            });
+        });
+
+        return approvedHours;
+    }
+
+    function syncLocalAccomplishmentStatus(accomplishmentId, nextStatus) {
+        let relatedStudentId = null;
+        let foundInHistory = false;
+
+        Object.keys(allStudentAccomps).forEach(studentKey => {
+            const accomplishment = (allStudentAccomps[studentKey] || []).find(item => String(item.id) === String(accomplishmentId));
+            if (accomplishment) {
+                accomplishment.status = nextStatus;
+                relatedStudentId = accomplishment.student_id;
+                foundInHistory = true;
+            }
+        });
+
+        if (!foundInHistory) {
+            const pendingAccomplishment = pendingAdvisoryAccomps.find(item => String(item.id) === String(accomplishmentId));
+            if (pendingAccomplishment) {
+                const studentKey = String(pendingAccomplishment.student_id);
+                if (!Array.isArray(allStudentAccomps[studentKey])) {
+                    allStudentAccomps[studentKey] = [];
+                }
+
+                allStudentAccomps[studentKey].unshift({
+                    ...pendingAccomplishment,
+                    status: nextStatus
+                });
+                relatedStudentId = pendingAccomplishment.student_id;
+            }
+        }
+
+        if (relatedStudentId !== null && relatedStudentId !== undefined) {
+            refreshStudentCompletedHours(relatedStudentId);
+        }
+    }
+
+    function togglePendingAccomplishmentSelection(accomplishmentId, isSelected) {
+        const normalizedId = String(accomplishmentId);
+
+        if (isSelected) {
+            selectedPendingAccomplishmentIds.add(normalizedId);
+        } else {
+            selectedPendingAccomplishmentIds.delete(normalizedId);
+        }
+
+        renderAdvisory(document.getElementById('main-content'));
+    }
+
+    function toggleAllPendingAccomplishments(sourceCheckbox) {
+        const { items } = getFilteredPendingAdvisoryAccomplishments();
+        const shouldSelectAll = Boolean(sourceCheckbox && sourceCheckbox.checked);
+
+        items.forEach(accomplishment => {
+            const normalizedId = String(accomplishment.id);
+            if (shouldSelectAll) {
+                selectedPendingAccomplishmentIds.add(normalizedId);
+            } else {
+                selectedPendingAccomplishmentIds.delete(normalizedId);
+            }
+        });
+
+        renderAdvisory(document.getElementById('main-content'));
+    }
+
+    async function handleBulkAccomplishmentApproval(button) {
+        const selectedIds = Array.from(selectedPendingAccomplishmentIds);
+
+        if (selectedIds.length === 0) {
+            showToast('Select at least one pending accomplishment first.', 'warning');
+            return;
+        }
+
+        if (!window.confirm(`Approve ${selectedIds.length} selected accomplishment report${selectedIds.length === 1 ? '' : 's'}?`)) {
+            return;
+        }
+
+        setButtonLoading(button, true, 'Approving...');
+
+        try {
+            const payload = new URLSearchParams();
+            payload.append('ajax', '1');
+            payload.append('bulk_approve_accomp', '1');
+            selectedIds.forEach(id => payload.append('ar_ids[]', id));
+
+            const response = await fetch(currentDashboardPath, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: payload.toString()
+            });
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Unable to bulk approve the selected accomplishment reports.');
+            }
+
+            selectedIds.forEach(id => {
+                syncLocalAccomplishmentStatus(id, 'Approved');
+            });
+
+            for (let index = pendingAdvisoryAccomps.length - 1; index >= 0; index -= 1) {
+                if (selectedPendingAccomplishmentIds.has(String(pendingAdvisoryAccomps[index].id))) {
+                    pendingAdvisoryAccomps.splice(index, 1);
+                }
+            }
+
+            selectedPendingAccomplishmentIds.clear();
+            showToast(data.message || 'Selected accomplishment reports approved successfully.', data.type || 'success');
+            renderAdvisory(document.getElementById('main-content'));
+        } catch (error) {
+            showToast(error.message || 'Unable to bulk approve the selected accomplishment reports.', 'danger');
+            setButtonLoading(button, false);
+        }
+    }
+
+    function attachLoadingStateToForms(root = document) {
+        root.querySelectorAll('form[data-loading-label]').forEach(form => {
+            if (form.dataset.loadingBound === '1') {
+                return;
+            }
+
+            form.dataset.loadingBound = '1';
+            form.addEventListener('submit', () => {
+                if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+                    return;
+                }
+
+                const submitButton = form.querySelector('button[type="submit"]');
+                setButtonLoading(submitButton, true, form.dataset.loadingLabel || 'Processing...');
+            });
+        });
+    }
+
+    function getSortedUniqueValues(values, numeric = false) {
+        return Array.from(new Set(values.filter(value => value !== null && value !== undefined && value !== '')))
+            .sort((a, b) => {
+                if (numeric) {
+                    return Number(a) - Number(b);
+                }
+
+                return String(a).localeCompare(String(b), undefined, {
+                    numeric: true,
+                    sensitivity: 'base'
+                });
+            });
+    }
+
+    function getAllAssignableStudents() {
+        const students = [];
+
+        Object.keys(studentsData).forEach(year => {
+            Object.keys(studentsData[year]).forEach(section => {
+                studentsData[year][section].forEach(student => {
+                    students.push(student);
+                });
+            });
+        });
+
+        return students.sort((a, b) => {
+            const yearDiff = Number(a.year_level || 0) - Number(b.year_level || 0);
+            if (yearDiff !== 0) return yearDiff;
+
+            const sectionDiff = String(a.section || '').localeCompare(String(b.section || ''), undefined, {
+                numeric: true,
+                sensitivity: 'base'
+            });
+            if (sectionDiff !== 0) return sectionDiff;
+
+            const lastNameDiff = String(a.lastname || '').localeCompare(String(b.lastname || ''), undefined, {
+                sensitivity: 'base'
+            });
+            if (lastNameDiff !== 0) return lastNameDiff;
+
+            return String(a.firstname || '').localeCompare(String(b.firstname || ''), undefined, {
+                sensitivity: 'base'
+            });
+        });
+    }
+
+    function formatStudentDisplayName(student) {
+        return `${student.lastname}, ${student.firstname}${student.mi ? ' ' + student.mi + '.' : ''}`;
+    }
+
+    function studentMatchesSelectionFilters(student) {
+        const searchTerm = String(studentSelectionSearch || '').trim().toLowerCase();
+        const haystack = [
+            student.firstname,
+            student.mi,
+            student.lastname,
+            `${student.lastname}, ${student.firstname}`,
+            student.email
+        ].join(' ').toLowerCase();
+
+        if (searchTerm && !haystack.includes(searchTerm)) {
+            return false;
+        }
+
+        if (studentSelectionYearFilter && String(student.year_level) !== String(studentSelectionYearFilter)) {
+            return false;
+        }
+
+        if (studentSelectionSectionFilter && String(student.section || '') !== String(studentSelectionSectionFilter)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    function syncSelectedStudentInputs() {
+        const hiddenInputs = document.getElementById('selectedStudentsHiddenInputs');
+        if (!hiddenInputs) return;
+
+        hiddenInputs.innerHTML = Array.from(selectedStudentIds)
+            .sort((a, b) => Number(a) - Number(b))
+            .map(studentId => `<input type="hidden" name="send_to[]" value="${studentId}">`)
+            .join('');
+    }
+
+    function updateStudentSelectionSummary(totalCount, visibleCount) {
+        const summary = document.getElementById('studentSelectionSummary');
+        if (!summary) return;
+
+        summary.textContent = `Showing ${visibleCount} of ${totalCount} students. ${selectedStudentIds.size} selected.`;
+    }
+
+    function updateStudentSelectionFilterOptions(allStudents) {
+        const yearFilter = document.getElementById('studentSelectionYearFilter');
+        const sectionFilter = document.getElementById('studentSelectionSectionFilter');
+        const availableYears = getSortedUniqueValues(allStudents.map(student => String(student.year_level || '')), true);
+        const studentsForSections = studentSelectionYearFilter
+            ? allStudents.filter(student => String(student.year_level) === String(studentSelectionYearFilter))
+            : allStudents;
+        const availableSections = getSortedUniqueValues(studentsForSections.map(student => String(student.section || '')));
+
+        if (studentSelectionYearFilter && !availableYears.includes(String(studentSelectionYearFilter))) {
+            studentSelectionYearFilter = '';
+        }
+
+        if (studentSelectionSectionFilter && !availableSections.includes(String(studentSelectionSectionFilter))) {
+            studentSelectionSectionFilter = '';
+        }
+
+        if (yearFilter) {
+            yearFilter.innerHTML = `
+                <option value="">All Year Levels</option>
+                ${availableYears.map(year => `<option value="${year}">Year ${year}</option>`).join('')}
+            `;
+            yearFilter.value = studentSelectionYearFilter;
+        }
+
+        if (sectionFilter) {
+            sectionFilter.innerHTML = `
+                <option value="">All Sections</option>
+                ${availableSections.map(section => `<option value="${section}">Section ${section}</option>`).join('')}
+            `;
+            sectionFilter.value = studentSelectionSectionFilter;
+        }
+    }
+
+    function clearStudentSelectionFilters() {
+        studentSelectionSearch = '';
+        studentSelectionYearFilter = '';
+        studentSelectionSectionFilter = '';
+
+        const searchInput = document.getElementById('studentSelectionSearch');
+        const yearFilter = document.getElementById('studentSelectionYearFilter');
+        const sectionFilter = document.getElementById('studentSelectionSectionFilter');
+
+        if (searchInput) searchInput.value = '';
+        if (yearFilter) yearFilter.value = '';
+        if (sectionFilter) sectionFilter.value = '';
+
+        populateStudentSelection();
+    }
+
+    function handleStudentAssignmentToggle(checkbox) {
+        const studentId = String(checkbox.value);
+
+        if (checkbox.checked) {
+            selectedStudentIds.add(studentId);
+        } else {
+            selectedStudentIds.delete(studentId);
+        }
+
+        syncSelectedStudentInputs();
+
+        const allStudents = getAllAssignableStudents();
+        const filteredStudents = allStudents.filter(studentMatchesSelectionFilters);
+        updateStudentSelectionSummary(allStudents.length, filteredStudents.length);
+    }
+
+    function taskAssignmentMatchesFilters(assignment) {
+        const searchTerm = String(taskAssignmentSearch || '').trim().toLowerCase();
+        const haystack = [
+            assignment.firstname,
+            assignment.lastname,
+            `${assignment.lastname}, ${assignment.firstname}`,
+            assignment.email,
+            assignment.student_number
+        ].join(' ').toLowerCase();
+
+        if (searchTerm && !haystack.includes(searchTerm)) {
+            return false;
+        }
+
+        if (taskAssignmentYearFilter && String(assignment.year_level) !== String(taskAssignmentYearFilter)) {
+            return false;
+        }
+
+        if (taskAssignmentSectionFilter && String(assignment.section || '') !== String(taskAssignmentSectionFilter)) {
+            return false;
+        }
+
+        if (taskAssignmentStatusFilter !== 'all' && String(assignment.assignment_status || '').toLowerCase() !== taskAssignmentStatusFilter) {
+            return false;
+        }
+
+        return true;
+    }
+
+    function updateTaskAssignmentFilterOptions(assignments) {
+        const yearFilter = document.getElementById('taskAssignmentYearFilter');
+        const sectionFilter = document.getElementById('taskAssignmentSectionFilter');
+        const availableYears = getSortedUniqueValues(assignments.map(assignment => String(assignment.year_level || '')), true);
+        const assignmentsForSections = taskAssignmentYearFilter
+            ? assignments.filter(assignment => String(assignment.year_level) === String(taskAssignmentYearFilter))
+            : assignments;
+        const availableSections = getSortedUniqueValues(assignmentsForSections.map(assignment => String(assignment.section || '')));
+
+        if (taskAssignmentYearFilter && !availableYears.includes(String(taskAssignmentYearFilter))) {
+            taskAssignmentYearFilter = '';
+        }
+
+        if (taskAssignmentSectionFilter && !availableSections.includes(String(taskAssignmentSectionFilter))) {
+            taskAssignmentSectionFilter = '';
+        }
+
+        if (yearFilter) {
+            yearFilter.innerHTML = `
+                <option value="">All Year Levels</option>
+                ${availableYears.map(year => `<option value="${year}">Year ${year}</option>`).join('')}
+            `;
+            yearFilter.value = taskAssignmentYearFilter;
+        }
+
+        if (sectionFilter) {
+            sectionFilter.innerHTML = `
+                <option value="">All Sections</option>
+                ${availableSections.map(section => `<option value="${section}">Section ${section}</option>`).join('')}
+            `;
+            sectionFilter.value = taskAssignmentSectionFilter;
+        }
+    }
+
+    function renderTaskAssignmentsList() {
+        const assignments = activeTaskDetailsId !== null ? (taskAssignments[activeTaskDetailsId] || []) : [];
+        const task = myTasks.find(item => String(item.task_id) === String(activeTaskDetailsId));
+        const title = document.getElementById('taskDetailsTitle');
+        const summary = document.getElementById('taskAssignmentsSummary');
+        const container = document.getElementById('taskAssignmentsList');
+        const paginationContainer = document.getElementById('taskAssignmentsPagination');
+        const reminderTaskIdInput = document.getElementById('taskReminderTaskId');
+        const reminderButton = document.getElementById('taskReminderBtn');
+
+        if (!container) return;
+
+        updateTaskAssignmentFilterOptions(assignments);
+
+        if (title) {
+            if (task) {
+                title.textContent = `${task.title} (${assignments.length} assigned student${assignments.length === 1 ? '' : 's'})`;
+            } else {
+                title.textContent = `Assigned Students (${assignments.length})`;
+            }
+        }
+
+        const filteredAssignments = assignments.filter(taskAssignmentMatchesFilters);
+        const pagination = getModalTablePagination(filteredAssignments, 'taskAssignments');
+        const visibleAssignments = pagination.items;
+        const completedAssignments = assignments.filter(assignment => String(assignment.assignment_status || '').toLowerCase() === 'completed').length;
+        const inProgressAssignments = assignments.filter(assignment => String(assignment.assignment_status || '').toLowerCase() === 'in progress').length;
+        const pendingAssignments = assignments.filter(assignment => String(assignment.assignment_status || '').toLowerCase() === 'pending').length;
+        const incompleteAssignments = assignments.filter(assignment => String(assignment.assignment_status || '').toLowerCase() !== 'completed').length;
+
+        if (reminderTaskIdInput) {
+            reminderTaskIdInput.value = activeTaskDetailsId !== null ? String(activeTaskDetailsId) : '';
+        }
+
+        if (reminderButton) {
+            reminderButton.disabled = incompleteAssignments === 0;
+        }
+
+        if (summary) {
+            const visibleLabel = filteredAssignments.length === 0
+                ? 'Showing 0 filtered students.'
+                : `Showing ${pagination.startIndex + 1}-${pagination.endIndex} of ${filteredAssignments.length} filtered students.`;
+            const summaryParts = [`${visibleLabel} ${assignments.length} assigned student${assignments.length === 1 ? '' : 's'} total.`];
+
+            if (task && task.due_date) {
+                summaryParts.push(`Due ${formatDueDate(task.due_date)}.`);
+            }
+
+            if (assignments.length > 0) {
+                summaryParts.push(`${completedAssignments} completed.`);
+                summaryParts.push(`${inProgressAssignments} in progress.`);
+                summaryParts.push(`${pendingAssignments} pending.`);
+            }
+
+            summary.textContent = summaryParts.join(' ');
+        }
+
+        if (filteredAssignments.length === 0) {
+            container.innerHTML = `
+                <tr>
+                    <td colspan="5" class="text-center text-muted">
+                        ${assignments.length === 0 ? 'No students assigned to this task.' : 'No assigned students match the current filters.'}
+                    </td>
+                </tr>
+            `;
+            if (paginationContainer) {
+                paginationContainer.innerHTML = renderModalPagination(
+                    'taskAssignments',
+                    pagination,
+                    assignments.length === 0
+                        ? 'No students assigned to this task yet.'
+                        : 'No assigned students match the current filters.'
+                );
+            }
+            return;
+        }
+
+        container.innerHTML = visibleAssignments.map(assignment => {
+            const normalizedStatus = String(assignment.assignment_status || '').toLowerCase();
+            let badgeClass = 'bg-secondary';
+            if (normalizedStatus === 'completed') badgeClass = 'bg-success';
+            else if (normalizedStatus === 'in progress') badgeClass = 'bg-info text-dark';
+            else if (normalizedStatus === 'pending') badgeClass = 'bg-warning text-dark';
+
+            const timeline = assignment.completed_at
+                ? `Completed ${formatDateTime(assignment.completed_at)}`
+                : `Assigned ${formatDateTime(assignment.assigned_at)}`;
+            const canReassign = normalizedStatus === 'pending';
+            const studentLabel = `${assignment.lastname}, ${assignment.firstname}`;
+            const studentMeta = [assignment.student_number, assignment.email].filter(Boolean).join(' â€¢ ');
+
+            return `
+                <tr>
+                    <td>
+                        <div class="fw-bold">${studentLabel}</div>
+                        <div class="small text-muted">${studentMeta || 'No additional student details'}</div>
+                    </td>
+                    <td>Section ${assignment.section} (Year ${assignment.year_level})</td>
+                    <td><span class="badge ${badgeClass}">${assignment.assignment_status}</span></td>
+                    <td><small class="text-muted">${timeline}</small></td>
+                    <td>
+                        ${canReassign ? `
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-outline-primary"
+                                onclick="openReassignTaskModal(${assignment.stask_id}, ${assignment.student_id}, ${assignment.task_id})"
+                            >
+                                <i class="fas fa-random me-1"></i> Reassign
+                            </button>
+                        ` : '<span class="small text-muted">Reassign unavailable</span>'}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        if (paginationContainer) {
+            paginationContainer.innerHTML = renderModalPagination('taskAssignments', pagination);
+        }
+    }
+
+    function clearTaskAssignmentFilters() {
+        taskAssignmentSearch = '';
+        taskAssignmentYearFilter = '';
+        taskAssignmentSectionFilter = '';
+        taskAssignmentStatusFilter = 'all';
+        resetModalTablePage('taskAssignments');
+
+        const searchInput = document.getElementById('taskAssignmentSearch');
+        const yearFilter = document.getElementById('taskAssignmentYearFilter');
+        const sectionFilter = document.getElementById('taskAssignmentSectionFilter');
+        const statusFilter = document.getElementById('taskAssignmentStatusFilter');
+
+        if (searchInput) searchInput.value = '';
+        if (yearFilter) yearFilter.value = '';
+        if (sectionFilter) sectionFilter.value = '';
+        if (statusFilter) statusFilter.value = 'all';
+
+        renderTaskAssignmentsList();
+    }
+
+    function openReassignTaskModal(studentTaskId, currentStudentId, taskId) {
+        const assignment = (taskAssignments[taskId] || []).find(item => String(item.stask_id) === String(studentTaskId));
+        const task = myTasks.find(item => String(item.task_id) === String(taskId));
+        const studentSelect = document.getElementById('reassignStudentSelect');
+        const context = document.getElementById('reassignTaskContext');
+        const studentTaskInput = document.getElementById('reassignStudentTaskId');
+
+        if (!assignment || !studentSelect || !studentTaskInput) {
+            showToast('Unable to prepare the task reassignment form.', 'danger');
+            return;
+        }
+
+        studentTaskInput.value = String(studentTaskId);
+
+        const eligibleStudents = getAllAssignableStudents().filter(student => String(student.stud_id) !== String(currentStudentId));
+        studentSelect.innerHTML = `
+            <option value="">Select student</option>
+            ${eligibleStudents.map(student => `
+                <option value="${student.stud_id}">
+                    ${formatStudentDisplayName(student)}${student.section ? ` â€¢ Section ${student.section}` : ''}
+                </option>
+            `).join('')}
+        `;
+
+        if (context) {
+            const taskTitle = task ? task.title : 'this task';
+            context.textContent = `Reassign "${taskTitle}" from ${assignment.lastname}, ${assignment.firstname} to another student.`;
+        }
+
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('reassignTaskModal')).show();
+    }
+
+    function attachTaskFormValidation() {
+        const forms = [
+            {
+                form: document.getElementById('createTaskForm'),
+                extraCheck() {
+                    const selectedTitle = document.getElementById('finalTaskTitle');
+                    if (selectedTitle && !selectedTitle.value.trim()) {
+                        showToast('Please choose a task category before submitting.', 'danger');
+                        return false;
+                    }
+                    return true;
+                }
+            },
+            {
+                form: document.getElementById('editTaskForm'),
+                extraCheck() {
+                    return true;
+                }
+            }
+        ];
+
+        forms.forEach(({ form, extraCheck }) => {
+            if (!form) return;
+
+            form.addEventListener('submit', (event) => {
+                if (form.id === 'createTaskForm') {
+                    syncSelectedStudentInputs();
+                }
+
+                if (!extraCheck()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
+
+                if (!form.checkValidity()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    showToast('Please complete all required fields before submitting.', 'danger');
+                    form.reportValidity();
+                    return;
+                }
+
+                const submitButton = form.querySelector('button[type="submit"]');
+                setButtonLoading(submitButton, true, form.id === 'editTaskForm' ? 'Saving...' : 'Submitting...');
+            });
+        });
+    }
+
+    function clearFlashParamsFromUrl() {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('msg');
+        url.searchParams.delete('msg_type');
+        window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+    }
 
     // View Management
     function setActiveViewLinks(viewName) {
@@ -1550,6 +2794,7 @@ function togglePasswordVisibility(icon, fieldId) {
 
     function showView(viewName) {
         setActiveViewLinks(viewName);
+        sessionStorage.setItem('instructorActiveView', viewName);
 
         const container = document.getElementById('main-content');
         container.innerHTML = ''; // Clear content
@@ -1582,6 +2827,8 @@ function togglePasswordVisibility(icon, fieldId) {
     function openInstructorNotification(notificationId) {
         const notification = (notifications || []).find((item) => String(item.id) === String(notificationId));
         if (!notification) return;
+
+        markNotificationRead(notificationId);
 
         const type = String(notification.type || '').toLowerCase();
 
@@ -1624,16 +2871,182 @@ function togglePasswordVisibility(icon, fieldId) {
         });
     }
 
+    async function handleAccomplishmentAction(action, accomplishmentId, button = null) {
+        const verb = action === 'approve' ? 'approve' : 'reject';
+        const confirmationMessage = action === 'approve'
+            ? 'Approve this accomplishment report?'
+            : 'Reject this accomplishment report?';
+
+        if (!window.confirm(confirmationMessage)) {
+            return;
+        }
+
+        const row = document.querySelector(`[data-accomp-id="${accomplishmentId}"]`);
+        const actionButtons = row ? Array.from(row.querySelectorAll('button')) : [];
+        actionButtons.forEach((actionButton) => {
+            if (button && actionButton === button) {
+                return;
+            }
+            actionButton.disabled = true;
+        });
+        if (button) {
+            setButtonLoading(button, true, action === 'approve' ? 'Approving...' : 'Rejecting...');
+        }
+
+        try {
+            const response = await fetch(currentDashboardPath, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: new URLSearchParams({
+                    ajax: '1',
+                    ar_id: String(accomplishmentId),
+                    [action === 'approve' ? 'approve_accomp' : 'reject_accomp']: '1'
+                }).toString()
+            });
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || `Unable to ${verb} the accomplishment report.`);
+            }
+
+            syncLocalAccomplishmentStatus(accomplishmentId, action === 'approve' ? 'Approved' : 'Rejected');
+            selectedPendingAccomplishmentIds.delete(String(accomplishmentId));
+            const accomplishmentIndex = pendingAdvisoryAccomps.findIndex((item) => String(item.id) === String(accomplishmentId));
+            if (accomplishmentIndex !== -1) {
+                pendingAdvisoryAccomps.splice(accomplishmentIndex, 1);
+            }
+
+            showToast(data.message || `Accomplishment ${verb}d successfully.`, data.type || 'success');
+            renderAdvisory(document.getElementById('main-content'));
+        } catch (error) {
+            showToast(error.message || `Unable to ${verb} the accomplishment report.`, 'danger');
+            if (button) {
+                setButtonLoading(button, false);
+            }
+            actionButtons.forEach((actionButton) => {
+                actionButton.disabled = false;
+            });
+        }
+    }
+
+    function openEndSessionModal(studentId, studentName) {
+        document.getElementById('endSessionStudentId').value = studentId;
+        document.getElementById('endSessionStudentName').textContent = studentName || 'Selected student';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('endSessionConfirmModal')).show();
+    }
+
+    async function confirmEndSession() {
+        const studentId = document.getElementById('endSessionStudentId').value;
+        const confirmButton = document.getElementById('confirmEndSessionBtn');
+
+        if (!studentId) {
+            showToast('Unable to identify the selected student.', 'danger');
+            return;
+        }
+
+        setButtonLoading(confirmButton, true, 'Ending...');
+
+        try {
+            const response = await fetch('process_section_request.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: new URLSearchParams({
+                    ajax: '1',
+                    end_session: '1',
+                    student_id: String(studentId)
+                }).toString()
+            });
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.message || 'Could not end the student session.');
+            }
+
+            for (let index = advisoryStudentsData.length - 1; index >= 0; index -= 1) {
+                if (String(advisoryStudentsData[index].stud_id) === String(studentId)) {
+                    advisoryStudentsData.splice(index, 1);
+                }
+            }
+
+            for (let index = pendingAdvisoryAccomps.length - 1; index >= 0; index -= 1) {
+                if (String(pendingAdvisoryAccomps[index].student_id) === String(studentId)) {
+                    selectedPendingAccomplishmentIds.delete(String(pendingAdvisoryAccomps[index].id));
+                    pendingAdvisoryAccomps.splice(index, 1);
+                }
+            }
+
+            bootstrap.Modal.getInstance(document.getElementById('endSessionConfirmModal'))?.hide();
+            showToast(data.message || 'Student session ended successfully.', data.type || 'success');
+            renderAdvisory(document.getElementById('main-content'));
+        } catch (error) {
+            showToast(error.message || 'Could not end the student session.', 'danger');
+        } finally {
+            setButtonLoading(confirmButton, false);
+        }
+    }
+
     function renderAdvisory(container) {
+        const hasPendingSubmissions = pendingAdvisoryAccomps.length > 0;
+        const filteredAdvisoryStudents = getFilteredAdvisoryStudents();
+        const { hasInvalidDateRange: hasInvalidPendingDateRange, items: filteredPendingAdvisoryAccomps } = getFilteredPendingAdvisoryAccomplishments();
+        const allVisiblePendingSelected = filteredPendingAdvisoryAccomps.length > 0
+            && filteredPendingAdvisoryAccomps.every(acc => selectedPendingAccomplishmentIds.has(String(acc.id)));
+        const requiredHoursLabel = Number(requiredHours || 0).toFixed(0);
+
         let html = `
         <br>
         <br>
-            <div class="d-flex justify-content-between align-items-center mb-4">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
                 <h2>My Advisory Class</h2>
-                <div>
-                     <button class="btn btn-outline-success me-2" data-bs-toggle="modal" data-bs-target="#importMasterModal">
+                <div class="d-flex gap-2 flex-wrap">
+                     <button class="btn btn-outline-secondary" type="button" onclick="window.location.href='export_records.php?type=student_list'">
+                        <i class="fas fa-users me-2"></i> Export Student List
+                     </button>
+                     <button class="btn btn-outline-secondary" type="button" onclick="window.location.href='export_records.php?type=advisory_records'">
+                        <i class="fas fa-file-csv me-2"></i> Export Records
+                     </button>
+                     <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#announcementModal">
+                        <i class="fas fa-bullhorn me-2"></i> Send Announcement
+                     </button>
+                     <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#importMasterModal">
                         <i class="fas fa-file-upload me-2"></i> Import Master List
                      </button>
+                </div>
+            </div>
+
+            <div class="content-card mb-4">
+                <div class="row g-2 align-items-end">
+                    <div class="col-lg-6">
+                        <label for="advisoryStudentSearch" class="form-label small text-muted mb-1">Search Student</label>
+                        <input
+                            type="search"
+                            id="advisoryStudentSearch"
+                            class="form-control"
+                            placeholder="Search by name, email, or student number"
+                            value="${advisoryStudentSearch}"
+                            oninput="advisoryStudentSearch = this.value; renderAdvisory(document.getElementById('main-content'));"
+                        >
+                    </div>
+                    <div class="col-lg-2 d-grid align-items-end">
+                        <button
+                            type="button"
+                            class="btn btn-outline-secondary"
+                            onclick="advisoryStudentSearch = ''; selectedPendingAccomplishmentIds.clear(); renderAdvisory(document.getElementById('main-content'));"
+                        >
+                            Clear Search
+                        </button>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="small text-muted">
+                            Search applies to advisory students and pending submissions.
+                        </div>
+                    </div>
                 </div>
             </div>
             
@@ -1682,13 +3095,13 @@ function togglePasswordVisibility(icon, fieldId) {
                                     <td>${statusBadge}</td>
                                     <td>
                                         <div class="d-flex gap-2">
-                                            <form method="POST" action="process_section_request.php" onsubmit="return confirm('Approve this enrollment?');">
+                                            <form method="POST" action="process_section_request.php" data-loading-label="Approving..." onsubmit="return confirm('Approve this enrollment?');">
                                                 <input type="hidden" name="request_id" value="${req.request_id}">
                                                 <button type="submit" name="approve_request" class="btn btn-success btn-sm" ${!hasMatch ? 'disabled title="Cannot approve: Record Mismatch"' : 'title="Approve"'}>
                                                     <i class="fas fa-check"></i>
                                                 </button>
                                             </form>
-                                            <form method="POST" action="process_section_request.php" onsubmit="return confirm('Decline this enrollment?');">
+                                            <form method="POST" action="process_section_request.php" data-loading-label="Declining..." onsubmit="return confirm('Decline this enrollment?');">
                                                 <input type="hidden" name="request_id" value="${req.request_id}">
                                                 <button type="submit" name="decline_request" class="btn btn-danger btn-sm" title="Decline">
                                                     <i class="fas fa-times"></i>
@@ -1705,13 +3118,82 @@ function togglePasswordVisibility(icon, fieldId) {
             </div>
             ` : ''}
             
-            ${pendingAdvisoryAccomps.length > 0 ? `
+            ${hasPendingSubmissions ? `
             <div class="content-card mb-4 border-start border-warning border-5">
-                <h4 class="text-warning mb-3"><i class="fas fa-hourglass-half me-2"></i>Pending Submissions</h4>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                    <div class="d-flex align-items-center flex-wrap gap-2">
+                        <h4 class="text-warning mb-0"><i class="fas fa-hourglass-half me-2"></i>Pending Submissions</h4>
+                        <span class="badge bg-warning text-dark rounded-pill">${filteredPendingAdvisoryAccomps.length} of ${pendingAdvisoryAccomps.length} shown</span>
+                        ${selectedPendingAccomplishmentIds.size > 0 ? `<span class="badge bg-primary rounded-pill">${selectedPendingAccomplishmentIds.size} selected</span>` : ''}
+                    </div>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button
+                            type="button"
+                            class="btn btn-outline-secondary btn-sm"
+                            onclick="selectedPendingAccomplishmentIds.clear(); renderAdvisory(document.getElementById('main-content'));"
+                            ${selectedPendingAccomplishmentIds.size === 0 ? 'disabled' : ''}
+                        >
+                            Clear Selection
+                        </button>
+                        <button
+                            type="button"
+                            class="btn btn-success btn-sm"
+                            onclick="handleBulkAccomplishmentApproval(this)"
+                            ${selectedPendingAccomplishmentIds.size === 0 ? 'disabled' : ''}
+                        >
+                            <i class="fas fa-check-double me-1"></i> Bulk Approve
+                        </button>
+                    </div>
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-md-4">
+                        <label for="pendingSubmissionDateFrom" class="form-label small text-muted mb-1">From</label>
+                        <input
+                            type="date"
+                            id="pendingSubmissionDateFrom"
+                            class="form-control"
+                            value="${pendingSubmissionDateFrom}"
+                            onchange="pendingSubmissionDateFrom = this.value; renderAdvisory(document.getElementById('main-content'));"
+                        >
+                    </div>
+                    <div class="col-md-4">
+                        <label for="pendingSubmissionDateTo" class="form-label small text-muted mb-1">To</label>
+                        <input
+                            type="date"
+                            id="pendingSubmissionDateTo"
+                            class="form-control"
+                            value="${pendingSubmissionDateTo}"
+                            onchange="pendingSubmissionDateTo = this.value; renderAdvisory(document.getElementById('main-content'));"
+                        >
+                    </div>
+                    <div class="col-md-4 d-grid align-items-end">
+                        <button
+                            type="button"
+                            class="btn btn-outline-secondary"
+                            onclick="pendingSubmissionDateFrom = ''; pendingSubmissionDateTo = ''; renderAdvisory(document.getElementById('main-content'));"
+                        >
+                            Clear Date Range
+                        </button>
+                    </div>
+                </div>
+                ${hasInvalidPendingDateRange ? `
+                <div class="alert alert-warning mb-3">
+                    Start date must be on or before end date.
+                </div>
+                ` : ''}
                 <div class="table-responsive">
                     <table class="table table-hover align-middle">
                         <thead class="table-light">
                             <tr>
+                                <th style="width: 40px;">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        ${allVisiblePendingSelected ? 'checked' : ''}
+                                        onchange="toggleAllPendingAccomplishments(this)"
+                                        ${filteredPendingAdvisoryAccomps.length === 0 ? 'disabled' : ''}
+                                    >
+                                </th>
                                 <th>Student</th>
                                 <th>Activity / Date</th>
                                 <th>Hours</th>
@@ -1720,7 +3202,7 @@ function togglePasswordVisibility(icon, fieldId) {
                             </tr>
                         </thead>
                         <tbody>
-                            ${pendingAdvisoryAccomps.map(acc => {
+                            ${filteredPendingAdvisoryAccomps.length > 0 ? filteredPendingAdvisoryAccomps.map(acc => {
                                 const fullName = `${acc.firstname} ${acc.mi ? acc.mi + '.' : ''} ${acc.lastname}`;
                                 const date = new Date(acc.work_date).toLocaleDateString();
                                 let photoHtml = '';
@@ -1739,6 +3221,14 @@ function togglePasswordVisibility(icon, fieldId) {
                                 return `
                                 <tr data-accomp-id="${acc.id}" data-student-id="${acc.student_id}">
                                     <td>
+                                        <input
+                                            type="checkbox"
+                                            class="form-check-input"
+                                            ${selectedPendingAccomplishmentIds.has(String(acc.id)) ? 'checked' : ''}
+                                            onchange="togglePendingAccomplishmentSelection(${acc.id}, this.checked)"
+                                        >
+                                    </td>
+                                    <td>
                                         <div class="fw-bold">${fullName}</div>
                                         <div class="small text-muted">Section ${acc.section}</div>
                                     </td>
@@ -1751,23 +3241,21 @@ function togglePasswordVisibility(icon, fieldId) {
                                     <td>${photoHtml || '<span class="text-muted small">No attachments</span>'}</td>
                                     <td>
                                         <div class="d-flex gap-2">
-                                            <form method="POST" onsubmit="return confirm('Approve this accomplishment?');">
-                                                <input type="hidden" name="ar_id" value="${acc.id}">
-                                                <button type="submit" name="approve_accomp" class="btn btn-success btn-sm" title="Approve">
-                                                    <i class="fas fa-check"></i>
-                                                </button>
-                                            </form>
-                                            <form method="POST" onsubmit="return confirm('Reject this accomplishment?');">
-                                                <input type="hidden" name="ar_id" value="${acc.id}">
-                                                <button type="submit" name="reject_accomp" class="btn btn-danger btn-sm" title="Reject">
-                                                    <i class="fas fa-times"></i>
-                                                </button>
-                                            </form>
+                                            <button type="button" class="btn btn-success btn-sm" title="Approve" onclick="handleAccomplishmentAction('approve', ${acc.id}, this)">
+                                                <i class="fas fa-check"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-danger btn-sm" title="Reject" onclick="handleAccomplishmentAction('reject', ${acc.id}, this)">
+                                                <i class="fas fa-times"></i>
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
                                 `;
-                            }).join('')}
+                            }).join('') : `
+                                <tr>
+                                    <td colspan="6" class="text-center text-muted py-4">No pending submissions found for the current filters.</td>
+                                </tr>
+                            `}
                         </tbody>
                     </table>
                 </div>
@@ -1778,9 +3266,11 @@ function togglePasswordVisibility(icon, fieldId) {
         
         if (advisoryStudentsData.length === 0) {
              html += '<div class="alert alert-info">No advisory section assigned yet or no students found in your assigned section.</div>';
+        } else if (filteredAdvisoryStudents.length === 0) {
+             html += '<div class="alert alert-info">No advisory students match the current search.</div>';
         } else {
             // Group students by section
-            const studentsBySection = advisoryStudentsData.reduce((acc, student) => {
+            const studentsBySection = filteredAdvisoryStudents.reduce((acc, student) => {
                 const section = student.section || 'Unassigned';
                 if (!acc[section]) acc[section] = [];
                 acc[section].push(student);
@@ -1814,11 +3304,23 @@ function togglePasswordVisibility(icon, fieldId) {
                      const photoUrl = (student.photo && student.photo !== '') ? '../' + photoPath : '../img/logo.png';
                      
                      const fullName = `${student.firstname} ${student.mi ? student.mi + '.' : ''} ${student.lastname}`;
-                     const hours = student.completed_hours || 0;
-                     const progress = Math.min((hours / 300) * 100, 100).toFixed(1);
+                     const hours = Number(student.completed_hours || 0);
+                     const hoursLabel = formatHours(hours);
+                     const remainingHoursLabel = formatHours(getRemainingHours(hours));
+                     const progress = Math.min((hours / Number(requiredHours || 1)) * 100, 100).toFixed(1);
+                     const canEndSession = hours >= Number(requiredHours);
+                     const nearRequirement = isNearRequiredHours(hours);
+                     const progressMessage = canEndSession
+                        ? 'Ready for End Session'
+                        : (nearRequirement
+                            ? `Only ${remainingHoursLabel} hrs left to reach the ${requiredHoursLabel}-hour requirement`
+                            : `${remainingHoursLabel} hrs remaining`);
+                     const progressMessageClass = canEndSession
+                        ? 'text-success fw-semibold'
+                        : (nearRequirement ? 'text-warning fw-semibold' : 'text-muted');
                      
                      html += `
-                        <tr>
+                        <tr data-student-id="${student.stud_id}">
                             <td>
                                 <div class="d-flex align-items-center">
                                     <img src="${photoUrl}" class="rounded-circle me-3" style="width: 40px; height: 40px; object-fit: cover;" onerror="this.onerror=null;this.src='../img/logo.png'">
@@ -1827,23 +3329,27 @@ function togglePasswordVisibility(icon, fieldId) {
                             </td>
                             <td style="min-width: 150px;">
                                 <div class="d-flex justify-content-between small text-muted mb-1">
-                                    <span>${hours}/300 hrs</span>
+                                    <span>${hoursLabel}/${requiredHoursLabel} hrs</span>
                                 </div>
                                 <div class="progress" style="height: 6px;">
                                     <div class="progress-bar bg-success" role="progressbar" style="width: ${progress}%"></div>
                                 </div>
+                                <div class="small ${progressMessageClass} mt-2">${progressMessage}</div>
                             </td>
                             <td>
                                 <div class="d-flex gap-2">
                                     <button class="btn btn-outline-primary btn-sm" onclick="viewStudentDetails(${student.stud_id})">
                                         <i class="fas fa-eye me-1"></i> View Details
                                     </button>
-                                    <form method="POST" action="process_section_request.php" class="d-inline" onsubmit="return confirm('End Session for this student? This will mark enrollment as Completed and lock the account.');">
-                                        <input type="hidden" name="student_id" value="${student.stud_id}">
-                                        <button type="submit" name="end_session" class="btn btn-outline-danger btn-sm" title="End Session & Archive">
-                                            <i class="fas fa-user-lock me-1"></i> End Session
-                                        </button>
-                                    </form>
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-danger btn-sm"
+                                        title="${canEndSession ? 'End Session & Archive' : `Available after ${requiredHoursLabel} approved hours`}"
+                                        onclick='openEndSessionModal(${student.stud_id}, ${JSON.stringify(fullName)})'
+                                        ${canEndSession ? '' : 'disabled'}
+                                    >
+                                        <i class="fas fa-user-lock me-1"></i> End Session
+                                    </button>
                                 </div>
                             </td>
                         </tr>
@@ -1859,6 +3365,7 @@ function togglePasswordVisibility(icon, fieldId) {
             });
         }
         container.innerHTML = html;
+        attachLoadingStateToForms(container);
     }
 
     function renderNotifications(container) {
@@ -2044,6 +3551,35 @@ function togglePasswordVisibility(icon, fieldId) {
                     </ol>
                 </nav>
             </div>
+            <div class="content-card mb-4">
+                <div class="row g-2 align-items-end">
+                    <div class="col-lg-6">
+                        <label for="classStudentSearch" class="form-label small text-muted mb-1">Search Student</label>
+                        <input
+                            type="search"
+                            id="classStudentSearch"
+                            class="form-control"
+                            placeholder="Search by name, email, or student number"
+                            value="${classStudentSearch}"
+                            oninput="classStudentSearch = this.value; renderYears();"
+                        >
+                    </div>
+                    <div class="col-lg-2 d-grid align-items-end">
+                        <button
+                            type="button"
+                            class="btn btn-outline-secondary"
+                            onclick="classStudentSearch = ''; const input = document.getElementById('classStudentSearch'); if (input) input.value = ''; renderYears();"
+                        >
+                            Clear Search
+                        </button>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="small text-muted">
+                            Search to jump straight to a student instead of browsing by year and section.
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div id="classes-content" class="row g-4"></div>
         `;
         renderYears();
@@ -2052,6 +3588,65 @@ function togglePasswordVisibility(icon, fieldId) {
     function renderYears() {
         const content = document.getElementById('classes-content');
         const nav = document.getElementById('classes-nav').querySelector('.breadcrumb');
+        const normalizedSearch = String(classStudentSearch || '').trim();
+
+        if (normalizedSearch) {
+            nav.innerHTML = `
+                <li class="breadcrumb-item"><a href="#" onclick="classStudentSearch = ''; const input = document.getElementById('classStudentSearch'); if (input) input.value = ''; renderYears(); return false;">Year Levels</a></li>
+                <li class="breadcrumb-item active">Search Results</li>
+            `;
+
+            const matchingStudents = getAllAssignableStudents().filter(student => studentMatchesNameSearch(student, normalizedSearch));
+
+            if (matchingStudents.length === 0) {
+                content.innerHTML = '<div class="col-12"><div class="content-card text-center text-muted">No students match the current search.</div></div>';
+                return;
+            }
+
+            const rows = matchingStudents.map(student => `
+                <tr data-student-id="${student.stud_id}">
+                    <td>
+                        <div class="fw-bold">${student.lastname}, ${student.firstname} ${student.mi ? student.mi + '.' : ''}</div>
+                        <div class="small text-muted">${student.email}</div>
+                    </td>
+                    <td>Year ${student.year_level}</td>
+                    <td>Section ${student.section}</td>
+                    <td>${formatHours(student.completed_hours)} hrs</td>
+                    <td>
+                        <button class="btn btn-sm btn-info text-white" onclick="viewStudentDetails(${student.stud_id})">
+                            <i class="fas fa-eye"></i> Details
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+
+            content.innerHTML = `
+                <div class="col-12">
+                    <div class="content-card">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                            <h4 class="mb-0">Search Results</h4>
+                            <span class="badge bg-primary rounded-pill">${matchingStudents.length} Students</span>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Student</th>
+                                        <th>Year</th>
+                                        <th>Section</th>
+                                        <th>Approved Hours</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${rows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
         nav.innerHTML = '<h2 class="mb-4">Year Levels</h2>';
         
         let html = '';
@@ -2130,7 +3725,7 @@ function togglePasswordVisibility(icon, fieldId) {
                             </div>
                         </div>
                     </td>
-                    <td>${s.completed_hours} hrs</td>
+                    <td>${formatHours(s.completed_hours)} hrs</td>
                     <td>
                         <button class="btn btn-sm btn-info text-white" onclick="viewStudentDetails(${s.stud_id})">
                             <i class="fas fa-eye"></i> Details
@@ -2161,11 +3756,9 @@ function togglePasswordVisibility(icon, fieldId) {
         `;
     }
     
-    function viewStudentDetails(studentId) {
-        // Find student
+    function renderStudentDetailsModal(studentId) {
         let student = null;
-        
-        // Search in Class Students (grouped structure)
+
         if (studentsData) {
             outerLoop:
             for (const year of Object.keys(studentsData)) {
@@ -2178,8 +3771,7 @@ function togglePasswordVisibility(icon, fieldId) {
                 }
             }
         }
-        
-        // Search in Advisory Students if not found
+
         if (!student && advisoryStudentsData) {
              student = advisoryStudentsData.find(s => s.stud_id == studentId);
         }
@@ -2190,95 +3782,215 @@ function togglePasswordVisibility(icon, fieldId) {
         }
 
         document.getElementById('studentDetailsTitle').textContent = 'Student Details';
-        
-        // Prepare Data
-        // Fix photo path: ensure we don't double 'uploads/' if DB already has it
-        // If DB has 'uploads/...' then '../student/' + photo is correct.
-        // If DB has 'filename.jpg', we might need '../student/uploads/' + photo.
+
         let photoPath = student.photo;
         if (photoPath && !photoPath.startsWith('uploads/')) {
-            photoPath = 'uploads/profile_photos/' + photoPath; // Fallback for legacy data
+            photoPath = 'uploads/profile_photos/' + photoPath;
         }
         const photoUrl = (student.photo && student.photo !== '') ? '../' + photoPath : '../img/logo.png';
         
-        const fullName = `${student.firstname} ${student.lastname}`;
-        const totalHours = parseFloat(student.completed_hours || 0).toFixed(2);
+        const fullName = `${student.firstname} ${student.mi ? student.mi + '. ' : ''}${student.lastname}`;
         const arLink = `../student/documents/ar.php?stud_id=${studentId}`;
-        
-        // Pending Tasks
-        const tasks = allStudentTasks[studentId] || [];
-        const pendingTasks = tasks.filter(t => t.status === 'Pending');
+        const tasks = [...(allStudentTasks[studentId] || [])].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+        const accomplishments = [...(allStudentAccomps[studentId] || [])].sort((a, b) => {
+            const left = new Date(b.work_date || b.created_at || 0).getTime();
+            const right = new Date(a.work_date || a.created_at || 0).getTime();
+            return left - right;
+        });
+        const approvedHours = calculateApprovedHoursFromAccomplishments(accomplishments);
+        const requiredHoursLabel = Number(requiredHours || 0).toFixed(0);
+        const remainingHoursLabel = formatHours(getRemainingHours(approvedHours));
+        const hasReachedRequirement = approvedHours >= Number(requiredHours || 0);
+        const nearRequirement = isNearRequiredHours(approvedHours);
+        const pendingHours = accomplishments.reduce((total, accomplishment) => (
+            String(accomplishment.status || '').toLowerCase() === 'pending'
+                ? total + Number(accomplishment.hours || 0)
+                : total
+        ), 0);
+        const rejectedHours = accomplishments.reduce((total, accomplishment) => (
+            String(accomplishment.status || '').toLowerCase() === 'rejected'
+                ? total + Number(accomplishment.hours || 0)
+                : total
+        ), 0);
+        const completedTaskCount = tasks.filter(task => String(task.status || '').toLowerCase() === 'completed').length;
+        const pendingTaskCount = tasks.filter(task => String(task.status || '').toLowerCase() === 'pending').length;
+        const progressPercent = Math.min((approvedHours / Number(requiredHours || 1)) * 100, 100).toFixed(1);
+        const progressNote = hasReachedRequirement
+            ? `Student has reached the ${requiredHoursLabel}-hour requirement.`
+            : (nearRequirement
+                ? `Only ${remainingHoursLabel} hrs remain before the ${requiredHoursLabel}-hour requirement is met.`
+                : `${remainingHoursLabel} hrs remain before the ${requiredHoursLabel}-hour requirement is met.`);
+        const progressNoteClass = hasReachedRequirement
+            ? 'text-success fw-semibold'
+            : (nearRequirement ? 'text-warning fw-semibold' : 'text-muted');
 
-        // Build HTML
-        let pendingTasksHtml = '';
-        if (pendingTasks.length > 0) {
-            pendingTasksHtml = `
-                <div class="flex-grow-1 ms-3">
-                    <h6 class="text-primary fw-bold mb-3"><i class="fas fa-tasks me-1"></i> Pending Tasks</h6>
-                    <div class="table-responsive">
-                        <table class="table table-hover table-sm align-middle border">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Task</th>
-                                    <th>Date Assigned</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-            `;
-            pendingTasks.forEach(t => {
-                pendingTasksHtml += `
-                    <tr>
-                        <td>
-                            <div class="fw-bold text-dark">${t.title}</div>
-                            <div class="small text-muted text-truncate" style="max-width: 200px;">${t.description}</div>
-                        </td>
-                        <td class="small text-muted">${new Date(t.created_at).toLocaleDateString()}</td>
-                    </tr>
-                `;
-            });
-            pendingTasksHtml += `
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            `;
-        }
+        const exactBreakdownRows = accomplishments.map(accomplishment => `
+            <tr>
+                <td>${formatDueDate(accomplishment.work_date)}</td>
+                <td>
+                    <div class="fw-semibold">${accomplishment.activity || 'No activity provided.'}</div>
+                    <div class="small text-muted">${accomplishment.time_start || 'N/A'} - ${accomplishment.time_end || 'N/A'}</div>
+                </td>
+                <td class="text-nowrap">${formatHours(accomplishment.hours)} hrs</td>
+            </tr>
+        `);
+
+        const tasksRows = tasks.map(task => `
+            <tr>
+                <td>
+                    <div class="fw-bold">${task.title}</div>
+                    <div class="small text-muted">${task.description || 'No description provided.'}</div>
+                </td>
+                <td>${formatDueDate(task.due_date)}</td>
+                <td>${formatDateTime(task.created_at)}</td>
+                <td><span class="badge ${getStatusBadgeClass(task.status)}">${task.status}</span></td>
+            </tr>
+        `);
+
+        const accomplishmentRows = accomplishments.map(accomplishment => `
+            <tr>
+                <td>${formatDueDate(accomplishment.work_date)}</td>
+                <td>${accomplishment.time_start || 'N/A'} - ${accomplishment.time_end || 'N/A'}</td>
+                <td>${formatHours(accomplishment.hours)} hrs</td>
+                <td><span class="badge ${getStatusBadgeClass(accomplishment.status)}">${accomplishment.status}</span></td>
+                <td>${accomplishment.activity || 'No activity provided.'}</td>
+                <td>${formatDateTime(accomplishment.created_at)}</td>
+            </tr>
+        `);
 
         const modalBody = `
             <div class="container-fluid p-0">
-                <div class="row mb-4 align-items-center">
+                <div class="row g-4 align-items-center mb-4">
                     <div class="col-auto">
                         <img src="${photoUrl}" alt="Profile" class="rounded-circle border border-3 border-primary" style="width: 100px; height: 100px; object-fit: cover;" onerror="this.onerror=null;this.src='../img/logo.png'"> 
                     </div>
                     <div class="col" style="min-width: 0;">
                         <h3 class="fw-bold text-dark mb-1 text-truncate" title="${fullName}">${fullName}</h3>
                         <p class="text-muted mb-2 text-truncate" title="${student.email}"><i class="fas fa-envelope me-1"></i> ${student.email}</p>
-                        <span class="badge bg-success fs-6 rounded-pill">
-                            <i class="fas fa-hourglass-half me-1"></i> Total Hours: ${totalHours}
-                        </span>
+                        <div class="d-flex flex-wrap gap-2">
+                            <span class="badge bg-success fs-6 rounded-pill">
+                                <i class="fas fa-hourglass-half me-1"></i> Approved: ${formatHours(approvedHours)} hrs
+                            </span>
+                            <span class="badge bg-warning text-dark fs-6 rounded-pill">
+                                Pending: ${formatHours(pendingHours)} hrs
+                            </span>
+                            <span class="badge bg-danger fs-6 rounded-pill">
+                                Rejected: ${formatHours(rejectedHours)} hrs
+                            </span>
+                        </div>
                     </div>
-                </div>
-                
-                <hr class="my-4">
-
-                <div class="d-flex align-items-start">
-                    <div class="${pendingTasks.length > 0 ? 'me-4' : 'w-100 text-center'}">
-                        <br>
-                            
-                    <a href="${arLink}" target="_blank" class="btn btn-primary btn-sm px-3 shadow-sm">
-                            
-                         <i class="fas fa-file-alt me-2"></i> View Accomplishment Report
+                    <div class="col-md-auto">
+                        <a href="${arLink}" target="_blank" class="btn btn-primary btn-sm px-3 shadow-sm">
+                            <i class="fas fa-file-alt me-2"></i> View Accomplishment Report
                         </a>
                     </div>
-                    ${pendingTasksHtml}
                 </div>
+
+                <div class="content-card mb-4">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                        <h6 class="text-primary fw-bold mb-0">Approved Hours Progress</h6>
+                        <span class="small text-muted">${formatHours(approvedHours)} / ${requiredHoursLabel} hrs</span>
+                    </div>
+                    <div class="progress" style="height: 8px;">
+                        <div class="progress-bar bg-success" role="progressbar" style="width: ${progressPercent}%"></div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-3 small text-muted mt-2">
+                        <span>${completedTaskCount} completed task${completedTaskCount === 1 ? '' : 's'}</span>
+                        <span>${pendingTaskCount} pending task${pendingTaskCount === 1 ? '' : 's'}</span>
+                        <span>${hasReachedRequirement ? 'Requirement reached' : `${remainingHoursLabel} hrs remaining`}</span>
+                        <span>Section ${student.section} | Year ${student.year_level}</span>
+                    </div>
+                    <div class="small ${progressNoteClass} mt-2">${progressNote}</div>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-lg-7">
+                        ${renderModalTableCard({
+                            key: 'studentDetailsTasks',
+                            title: 'Assigned Tasks',
+                            titleClass: 'text-primary',
+                            badgeClass: 'bg-primary',
+                            badgeLabel: `${tasks.length} Total`,
+                            headersHtml: `
+                                <th>Task</th>
+                                <th>Due Date</th>
+                                <th>Assigned</th>
+                                <th>Status</th>
+                            `,
+                            rows: tasksRows,
+                            emptyRowHtml: `
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted py-3">No task assignments found for this student.</td>
+                                </tr>
+                            `,
+                            emptyLabel: 'No task assignments found for this student.',
+                            wrapperClass: 'content-card h-100'
+                        })}
+                    </div>
+                    <div class="col-lg-5">
+                        ${renderModalTableCard({
+                            key: 'studentDetailsBreakdown',
+                            title: 'Exact Hours Breakdown',
+                            titleClass: 'text-success',
+                            badgeClass: 'bg-success',
+                            badgeLabel: `${accomplishments.length} Accomplishment${accomplishments.length === 1 ? '' : 's'}`,
+                            headersHtml: `
+                                <th>Date</th>
+                                <th>Activity</th>
+                                <th>Hours</th>
+                            `,
+                            rows: exactBreakdownRows,
+                            emptyRowHtml: `
+                                <tr>
+                                    <td colspan="3" class="text-center text-muted py-3">No accomplishment submissions yet.</td>
+                                </tr>
+                            `,
+                            emptyLabel: 'No accomplishment submissions yet.',
+                            wrapperClass: 'content-card h-100'
+                        })}
+                    </div>
+                </div>
+
+                ${renderModalTableCard({
+                    key: 'studentDetailsHistory',
+                    title: 'Accomplishment History',
+                    titleClass: 'text-success',
+                    badgeClass: 'bg-secondary',
+                    badgeLabel: 'Includes status and submission timestamps',
+                    headersHtml: `
+                        <th>Work Date</th>
+                        <th>Time</th>
+                        <th>Hours</th>
+                        <th>Status</th>
+                        <th>Activity</th>
+                        <th>Submitted</th>
+                    `,
+                    rows: accomplishmentRows,
+                    emptyRowHtml: `
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-3">No accomplishment history found for this student.</td>
+                        </tr>
+                    `,
+                    emptyLabel: 'No accomplishment history found for this student.',
+                    wrapperClass: 'content-card mt-4'
+                })}
             </div>
         `;
         
         const modalContainer = document.querySelector('#studentDetailsModal .modal-body');
         modalContainer.innerHTML = modalBody;
+    }
 
-        const modal = new bootstrap.Modal(document.getElementById('studentDetailsModal'));
+    function viewStudentDetails(studentId) {
+        activeStudentDetailsId = studentId;
+        resetModalTablePages([
+            'studentDetailsTasks',
+            'studentDetailsBreakdown',
+            'studentDetailsHistory'
+        ]);
+        renderStudentDetailsModal(studentId);
+
+        const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('studentDetailsModal'));
         modal.show();
     }
 
@@ -2321,7 +4033,7 @@ function togglePasswordVisibility(icon, fieldId) {
         let optionsHtml = `
             <option value="latest" ${taskMonthFilter === 'latest' ? 'selected' : ''}>Latest Month</option>
             <option value="all" ${taskMonthFilter === 'all' ? 'selected' : ''}>All Tasks</option>
-            <option disabled>──────────</option>
+            <option disabled>â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€</option>
         `;
 
         sortedYears.forEach(y => {
@@ -2346,6 +4058,8 @@ function togglePasswordVisibility(icon, fieldId) {
                             <tr>
                                 <th>Task Title</th>
                                 <th>Description</th>
+                                <th>Assigned Students</th>
+                                <th>Due Date</th>
                                 <th>Created At</th>
                                 <th class="text-end">Actions</th>
                             </tr>
@@ -2357,16 +4071,40 @@ function togglePasswordVisibility(icon, fieldId) {
                 // Formatting date nicely
                 const d = new Date(task.created_at);
                 const dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const assignments = taskAssignments[task.task_id] || [];
+                const assignedCount = assignments.length;
+                const completedCount = assignments.filter(assignment => String(assignment.assignment_status || '').toLowerCase() === 'completed').length;
+                const inProgressCount = assignments.filter(assignment => String(assignment.assignment_status || '').toLowerCase() === 'in progress').length;
+                const pendingCount = assignments.filter(assignment => String(assignment.assignment_status || '').toLowerCase() === 'pending').length;
+                const incompleteCount = Math.max(assignedCount - completedCount, 0);
+                const dueDateLabel = formatDueDate(task.due_date);
                 
                     tasksHtml += `
                         <tr data-task-id="${task.task_id}">
                             <td class="fw-bold text-primary">${task.title}</td>
                         <td><div class="text-truncate" style="max-width: 300px;" title="${task.description}">${task.description}</div></td>
+                        <td>
+                            <div class="fw-semibold">${assignedCount} student${assignedCount === 1 ? '' : 's'}</div>
+                            <div class="small text-muted">${completedCount} completed â€¢ ${inProgressCount} in progress â€¢ ${pendingCount} pending</div>
+                        </td>
+                        <td><span class="badge bg-light text-dark border">${dueDateLabel}</span></td>
                         <td><small class="text-muted">${dateStr}</small></td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-outline-info me-1" onclick="openTaskDetailsModal(${task.task_id})">
-                                <i class="fas fa-users"></i>
+                            <button class="btn btn-sm btn-outline-info me-1" title="View ${assignedCount} assigned student${assignedCount === 1 ? '' : 's'}" onclick="openTaskDetailsModal(${task.task_id})">
+                                <i class="fas fa-users me-1"></i>${assignedCount}
                             </button>
+                            <form method="POST" action="${currentDashboardPath}" class="d-inline" data-loading-label="Sending reminders..." onsubmit="return confirm('Send reminders to students who have not yet completed this task?');">
+                                <input type="hidden" name="task_id" value="${task.task_id}">
+                                <button class="btn btn-sm btn-outline-warning me-1" type="submit" name="remind_task" title="${incompleteCount > 0 ? `Send reminders to ${incompleteCount} student${incompleteCount === 1 ? '' : 's'}` : 'Everyone has completed this task'}" ${incompleteCount === 0 ? 'disabled' : ''}>
+                                    <i class="fas fa-bell"></i>
+                                </button>
+                            </form>
+                            <form method="POST" action="${currentDashboardPath}" class="d-inline" data-loading-label="Duplicating task..." onsubmit="return confirm('Create a duplicate of this task and assign it to the same students?');">
+                                <input type="hidden" name="task_id" value="${task.task_id}">
+                                <button class="btn btn-sm btn-outline-primary me-1" type="submit" name="duplicate_task" title="Duplicate task">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </form>
                             <button class="btn btn-sm btn-outline-secondary me-1" onclick="openEditTaskModal(${task.task_id})">
                                 <i class="fas fa-edit"></i>
                             </button>
@@ -2392,6 +4130,9 @@ function togglePasswordVisibility(icon, fieldId) {
                     <select class="form-select w-auto" onchange="taskMonthFilter = this.value; renderTasks(document.getElementById('main-content'))">
                         ${optionsHtml}
                     </select>
+                    <button class="btn btn-outline-secondary" type="button" onclick="window.location.href='export_records.php?type=task_assignments'">
+                        <i class="fas fa-file-csv me-1"></i> Export CSV
+                    </button>
                     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskModal">
                         <i class="fas fa-plus"></i> New Task
                     </button>
@@ -2409,6 +4150,7 @@ function togglePasswordVisibility(icon, fieldId) {
                 ${tasksHtml}
             </div>
         `;
+        attachLoadingStateToForms(container);
     }
 
     function openEditTaskModal(taskId) {
@@ -2419,72 +4161,99 @@ function togglePasswordVisibility(icon, fieldId) {
         document.getElementById('edit_task_title').value = task.title;
         document.getElementById('edit_task_desc').value = task.description;
         document.getElementById('edit_task_duration').value = task.duration || "";
+        document.getElementById('edit_task_due_date').value = task.due_date || "";
         
         const modal = new bootstrap.Modal(document.getElementById('editTaskModal'));
         modal.show();
     }
 
     function openTaskDetailsModal(taskId) {
-        const assignments = taskAssignments[taskId] || [];
-        const container = document.getElementById('taskAssignmentsList');
-        let html = '';
-        
-        if (assignments.length === 0) {
-            html = '<tr><td colspan="3" class="text-center text-muted">No students assigned to this task.</td></tr>';
-        } else {
-            assignments.forEach(a => {
-                let badgeClass = 'bg-secondary';
-                if (a.assignment_status === 'Completed') badgeClass = 'bg-success';
-                else if (a.assignment_status === 'Pending') badgeClass = 'bg-warning text-dark';
-                
-                html += `
-                    <tr>
-                        <td class="fw-bold">${a.lastname}, ${a.firstname}</td>
-                        <td>Section ${a.section} (Year ${a.year_level})</td>
-                        <td><span class="badge ${badgeClass}">${a.assignment_status}</span></td>
-                    </tr>
-                `;
-            });
-        }
-        
-        container.innerHTML = html;
+        activeTaskDetailsId = taskId;
+        taskAssignmentSearch = '';
+        taskAssignmentYearFilter = '';
+        taskAssignmentSectionFilter = '';
+        taskAssignmentStatusFilter = 'all';
+        resetModalTablePage('taskAssignments');
+
+        const searchInput = document.getElementById('taskAssignmentSearch');
+        const yearFilter = document.getElementById('taskAssignmentYearFilter');
+        const sectionFilter = document.getElementById('taskAssignmentSectionFilter');
+        const statusFilter = document.getElementById('taskAssignmentStatusFilter');
+
+        if (searchInput) searchInput.value = '';
+        if (yearFilter) yearFilter.value = '';
+        if (sectionFilter) sectionFilter.value = '';
+        if (statusFilter) statusFilter.value = 'all';
+
+        renderTaskAssignmentsList();
         const modal = new bootstrap.Modal(document.getElementById('taskDetailsModal'));
         modal.show();
     }
 
     function populateStudentSelection() {
+        const allStudents = getAllAssignableStudents();
+        const filteredStudents = allStudents.filter(studentMatchesSelectionFilters);
         const accordion = document.getElementById('studentAccordion');
+        if (!accordion) return;
+
+        const groupedStudents = {};
         let html = '';
         let index = 0;
-        
-        Object.keys(studentsData).forEach(year => {
-            Object.keys(studentsData[year]).forEach(sec => {
-                const students = studentsData[year][sec];
+
+        updateStudentSelectionFilterOptions(allStudents);
+
+        filteredStudents.forEach(student => {
+            const year = String(student.year_level || 'N/A');
+            const section = String(student.section || 'Unassigned');
+
+            if (!groupedStudents[year]) {
+                groupedStudents[year] = {};
+            }
+
+            if (!groupedStudents[year][section]) {
+                groupedStudents[year][section] = [];
+            }
+
+            groupedStudents[year][section].push(student);
+        });
+
+        Object.keys(groupedStudents).sort((a, b) => Number(a) - Number(b)).forEach(year => {
+            Object.keys(groupedStudents[year]).sort((a, b) => String(a).localeCompare(String(b), undefined, {
+                numeric: true,
+                sensitivity: 'base'
+            })).forEach(sec => {
+                const students = groupedStudents[year][sec];
                 const id = `collapse${index}`;
+                const allChecked = students.length > 0 && students.every(student => selectedStudentIds.has(String(student.stud_id)));
                 
                 html += `
                     <div class="accordion-item">
                         <h2 class="accordion-header">
                             <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#${id}">
                                 Year ${year} - Section ${sec}
+                                <span class="badge bg-primary ms-2">${students.length}</span>
                             </button>
                         </h2>
                         <div id="${id}" class="accordion-collapse collapse">
                             <div class="accordion-body">
                                 <div class="form-check mb-2 pb-2 border-bottom">
-                                    <input class="form-check-input" type="checkbox" id="selectAll_${index}" onchange="toggleSection(this, '${id}')">
+                                    <input class="form-check-input" type="checkbox" id="selectAll_${index}" onchange="toggleSection(this, '${id}')" ${allChecked ? 'checked' : ''}>
                                     <label class="form-check-label fw-bold" for="selectAll_${index}">
-                                        Select All
+                                        Select All Visible Students
                                     </label>
                                 </div>
                 `;
                 
                 students.forEach(s => {
+                    const studentId = String(s.stud_id);
+                    const checked = selectedStudentIds.has(studentId) ? 'checked' : '';
+
                     html += `
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" name="send_to[]" value="${s.stud_id}" id="check_${s.stud_id}">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input student-selection-checkbox" type="checkbox" value="${studentId}" id="check_${studentId}" onchange="handleStudentAssignmentToggle(this)" ${checked}>
                             <label class="form-check-label" for="check_${s.stud_id}">
-                                ${s.lastname}, ${s.firstname}
+                                <div class="fw-semibold">${formatStudentDisplayName(s)}</div>
+                                <div class="small text-muted">${s.email || 'No email available'}</div>
                             </label>
                         </div>
                     `;
@@ -2495,19 +4264,48 @@ function togglePasswordVisibility(icon, fieldId) {
                         </div>
                     </div>
                 `;
-                index++;
+                index += 1;
             });
         });
-        accordion.innerHTML = html;
+        accordion.innerHTML = html || '<div class="text-center text-muted py-4">No students match the current filters.</div>';
+        syncSelectedStudentInputs();
+        updateStudentSelectionSummary(allStudents.length, filteredStudents.length);
     }
 
     function toggleSection(source, sectionId) {
-        const checkboxes = document.querySelectorAll(`#${sectionId} input[name="send_to[]"]`);
-        checkboxes.forEach(cb => cb.checked = source.checked);
+        const checkboxes = document.querySelectorAll(`#${sectionId} .student-selection-checkbox`);
+
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = source.checked;
+
+            if (source.checked) {
+                selectedStudentIds.add(String(checkbox.value));
+            } else {
+                selectedStudentIds.delete(String(checkbox.value));
+            }
+        });
+
+        syncSelectedStudentInputs();
+
+        const allStudents = getAllAssignableStudents();
+        const filteredStudents = allStudents.filter(studentMatchesSelectionFilters);
+        updateStudentSelectionSummary(allStudents.length, filteredStudents.length);
     }
 
-    // Initialize
-    showView('dashboard');
+    document.addEventListener('DOMContentLoaded', function() {
+        attachTaskFormValidation();
+        attachLoadingStateToForms();
+        document.getElementById('confirmEndSessionBtn')?.addEventListener('click', confirmEndSession);
+        document.getElementById('createTaskModal')?.addEventListener('shown.bs.modal', clearStudentSelectionFilters);
+
+        const savedView = sessionStorage.getItem('instructorActiveView') || 'dashboard';
+        showView(savedView);
+
+        if (initialFlashMessage) {
+            showToast(initialFlashMessage, initialFlashType || inferToastType(initialFlashMessage));
+            clearFlashParamsFromUrl();
+        }
+    });
 
     // RSS ACTIVITY TYPE SELECTION LOGIC
     document.addEventListener('DOMContentLoaded', function() {

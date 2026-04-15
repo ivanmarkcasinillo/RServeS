@@ -284,12 +284,14 @@ $stmt->close();
 ?>
 <!DOCTYPE html>
 <html lang="en">
-<head>
+<head class="rserve-theme">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Dashboard - College of Technology</title>
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- RServeS Theme -->
+    <link rel="stylesheet" href="../assets/css/rserve-dashboard-theme.css">
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Font Awesome -->
@@ -303,6 +305,15 @@ $stmt->close();
             --bg-color: #f8f9fa;
             --text-dark: #123047;
             --sidebar-width: 260px;
+            --rserve-primary: #153f7a;
+            --rserve-primary-deep: #0c2e60;
+            --rserve-primary-soft: #e9f0fb;
+            --rserve-surface: #ffffff;
+            --rserve-surface-alt: #f6f9fe;
+            --rserve-ink: #0f172a;
+            --rserve-muted: #64748b;
+            --rserve-border: #d9e4f3;
+            --rserve-shadow: 0 22px 50px rgba(15, 30, 60, 0.08);
         }
 
         body {
@@ -511,22 +522,7 @@ $stmt->close();
             color: white;
         }
         
-        /* Modal tweaks */
-        .modal-content {
-            background: rgba(255, 255, 255, 0.9);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
-        }
-        .modal-header {
-            background: linear-gradient(90deg, rgba(29, 110, 160, 0.9), rgba(13, 60, 97, 0.95));
-            color: white;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        .btn-close-white {
-            filter: invert(1) grayscale(100%) brightness(200%);
-        }
+
 
         /* Instructions Card */
         .card {
@@ -817,7 +813,7 @@ $stmt->close();
 
 <!-- Profile Modal -->
 <div class="modal fade" id="profileModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">My Profile</h5>
@@ -843,7 +839,7 @@ $stmt->close();
 
 <!-- Create Verbal Task Modal -->
 <div class="modal fade" id="verbalTaskModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Create Verbal Task</h5>
@@ -921,7 +917,7 @@ $stmt->close();
 <!-- Add Accomplishment Modal -->
 <?php if (!in_array($_SESSION['role'], ['Coordinator', 'Instructor'])): ?>
 <div class="modal fade" id="addAccomplishmentModal" tabindex="-1">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">➕ Submit to Adviser</h5>

@@ -2,9 +2,53 @@
 session_start();
 require "dbconnect.php";
 require_once __DIR__ . "/../send_email.php";
+require_once __DIR__ . "/task_assignment_helper.php";
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Instructor') {
     header("Location: ../home2.php");
+    exit;
+}
+
+function rserves_process_request_is_ajax(): bool
+{
+    return (isset($_POST['ajax']) && $_POST['ajax'] === '1')
+        || strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest';
+}
+
+function rserves_process_request_dashboard_path(): string
+{
+    $departmentId = intval($_SESSION['department_id'] ?? 2);
+
+    return match ($departmentId) {
+        1 => 'instructor_college_of_education_dashboard.php',
+        2 => 'instructor_college_of_technology_dashboard.php',
+        3 => 'instructor_college_of_hospitality_and_tourism_management_dashboard.php',
+        default => 'instructor_college_of_technology_dashboard.php',
+    };
+}
+
+function rserves_process_request_respond(bool $success, string $message, ?string $type = null): void
+{
+    $toastType = $type ?? ($success ? 'success' : 'danger');
+
+    if (rserves_process_request_is_ajax()) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'success' => $success,
+            'message' => $message,
+            'type' => $toastType,
+        ]);
+        exit;
+    }
+
+    header(
+        "Location: "
+        . rserves_process_request_dashboard_path()
+        . "?msg="
+        . urlencode($message)
+        . "&msg_type="
+        . urlencode($toastType)
+    );
     exit;
 }
 
@@ -78,8 +122,7 @@ if (isset($_POST['approve_request'])) {
     } else {
         $msg = "Invalid request or already processed.";
     }
-    header("Location: instructor_college_of_technology_dashboard.php?msg=" . urlencode($msg));
-    exit;
+    rserves_process_request_respond(stripos($msg, 'Invalid') !== 0, $msg);
 }
 
 // DECLINE REQUEST
@@ -124,13 +167,22 @@ if (isset($_POST['decline_request'])) {
     } else {
         $msg = "Invalid request.";
     }
-    header("Location: instructor_college_of_technology_dashboard.php?msg=" . urlencode($msg));
-    exit;
+    rserves_process_request_respond(stripos($msg, 'Invalid') !== 0, $msg);
 }
 
 // END SESSION (Mark as Completed)
 if (isset($_POST['end_session'])) {
     $student_id = intval($_POST['student_id']);
+
+    if (!rserves_instructor_student_can_end_session($conn, $student_id)) {
+        $required_hours = number_format(rserves_instructor_required_hours(), 0);
+        $current_hours = number_format(rserves_instructor_get_student_approved_hours($conn, $student_id), 2);
+        rserves_process_request_respond(
+            false,
+            "End Session is only available once the student reaches {$required_hours} approved hours. Current approved hours: {$current_hours}.",
+            'warning'
+        );
+    }
     
     // Mark section request as Completed (if approved)
     $up = $conn->prepare("UPDATE section_requests SET status = 'Completed' WHERE student_id = ? AND adviser_id = ? AND status = 'Approved'");
@@ -155,7 +207,6 @@ if (isset($_POST['end_session'])) {
          $msg = "Could not end session (Student might not be approved or not in your advisory class).";
     }
     
-    header("Location: instructor_college_of_technology_dashboard.php?msg=" . urlencode($msg));
-    exit;
+    rserves_process_request_respond(stripos($msg, 'Could not') !== 0, $msg);
 }
 ?>

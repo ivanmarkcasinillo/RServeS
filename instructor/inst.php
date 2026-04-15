@@ -611,7 +611,7 @@ $pendingAccomps = [];
 <!-- Modals -->
 <!-- Profile Modal -->
 <div class="modal fade" id="profileModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">My Profile</h5>
@@ -645,7 +645,7 @@ $pendingAccomps = [];
 
 <!-- Create Task Modal -->
 <div class="modal fade" id="createTaskModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content">
             <form action="<?php echo $_SERVER['PHP_SELF']; ?>" method="POST">
                 <div class="modal-header">
@@ -733,7 +733,7 @@ $pendingAccomps = [];
 
 <!-- Edit Task Modal -->
 <div class="modal fade" id="editTaskModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <form action="<?php echo $_SERVER['PHP_SELF']; ?>" method="POST">
                 <input type="hidden" name="task_id" id="edit_task_id">

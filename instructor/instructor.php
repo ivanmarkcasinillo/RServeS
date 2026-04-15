@@ -313,7 +313,7 @@ $stmt->close();
 
     <!-- Edit Task Modal -->
     <div class="modal fade" id="editTaskModal" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">Edit Task</h5>
@@ -350,7 +350,7 @@ $stmt->close();
 
     <!-- Confirm Delete Modal -->
     <div class="modal fade" id="confirmDeleteModal" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title text-danger">Confirm Delete</h5>
@@ -370,7 +370,7 @@ $stmt->close();
 
     <!-- End Session Confirmation -->
     <div class="modal fade" id="endSessionModal" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header bg-danger text-white">
                     <h5 class="modal-title">End Student Session?</h5>

@@ -43,6 +43,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $up_notif->close();
         exit;
     }
+
+    if (!empty($data['notification_id'])) {
+        $notification_id = intval($data['notification_id']);
+        $up_notif = $conn->prepare("UPDATE instructor_notifications SET is_read = 1 WHERE instructor_id = ? AND id = ?");
+        $up_notif->bind_param("ii", $inst_id, $notification_id);
+
+        if ($up_notif->execute()) {
+            echo json_encode(['success' => true]);
+        } else {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => $conn->error]);
+        }
+
+        $up_notif->close();
+        exit;
+    }
 }
 
 echo json_encode(['success' => false, 'message' => 'Invalid request']);

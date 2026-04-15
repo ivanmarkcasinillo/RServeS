@@ -1,12 +1,154 @@
 <?php
 session_start();
 include "dbconnect.php";
+require_once __DIR__ . '/../send_email.php';
+require_once __DIR__ . '/../student/enrollment_form_config.php';
 
 // Only allow Administrator
 if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Administrator') {
     header("Location: ../home2.php");
     exit;
 }
+
+if (!function_exists('rserves_admin_json_response')) {
+    function rserves_admin_json_response(array $payload, int $statusCode = 200): void
+    {
+        if (ob_get_length()) {
+            ob_clean();
+        }
+
+        http_response_code($statusCode);
+        header('Content-Type: application/json');
+        echo json_encode($payload);
+        exit;
+    }
+}
+
+if (!function_exists('rserves_admin_bind_params')) {
+    function rserves_admin_bind_params(mysqli_stmt $stmt, string $types, array $values): bool
+    {
+        if ($types === '') {
+            return true;
+        }
+
+        $bindValues = [$types];
+        foreach ($values as $index => $value) {
+            $bindValues[] = &$values[$index];
+        }
+
+        return call_user_func_array([$stmt, 'bind_param'], $bindValues);
+    }
+}
+
+if (!function_exists('rserves_admin_generate_temp_password')) {
+    function rserves_admin_generate_temp_password(int $length = 10): string
+    {
+        $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+        $password = '';
+        $maxIndex = strlen($alphabet) - 1;
+
+        for ($i = 0; $i < $length; $i++) {
+            $password .= $alphabet[random_int(0, $maxIndex)];
+        }
+
+        return $password;
+    }
+}
+
+if (!function_exists('rserves_admin_resolve_asset_url')) {
+    function rserves_admin_resolve_asset_url(?string $relativePath): ?string
+    {
+        $path = trim((string) $relativePath);
+        if ($path === '') {
+            return null;
+        }
+
+        if (preg_match('/^data:image\//i', $path) === 1) {
+            return $path;
+        }
+
+        $normalized = ltrim(str_replace('\\', '/', $path), '/');
+        $rootDir = dirname(__DIR__);
+        $candidates = [
+            [
+                'server' => $rootDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $normalized),
+                'url' => '../' . $normalized,
+            ],
+            [
+                'server' => $rootDir . DIRECTORY_SEPARATOR . 'student' . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $normalized),
+                'url' => '../student/' . $normalized,
+            ],
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate['server'])) {
+                return $candidate['url'];
+            }
+        }
+
+        return '../' . $normalized;
+    }
+}
+
+if (!function_exists('rserves_admin_resolve_profile_photo_url')) {
+    function rserves_admin_resolve_profile_photo_url(?string $photoPath): ?string
+    {
+        $path = trim((string) $photoPath);
+        if ($path === '') {
+            return null;
+        }
+
+        $normalized = str_replace('\\', '/', $path);
+        $candidates = [];
+
+        if (strpos($normalized, 'uploads/') === 0) {
+            $candidates[] = $normalized;
+        }
+
+        $candidates[] = 'uploads/profile_photos/' . ltrim(basename($normalized), '/');
+        $rootDir = dirname(__DIR__);
+
+        foreach ($candidates as $candidate) {
+            $resolvedPath = ltrim(str_replace('\\', '/', $candidate), '/');
+            $serverCandidates = [
+                $rootDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $resolvedPath),
+                $rootDir . DIRECTORY_SEPARATOR . 'student' . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $resolvedPath),
+            ];
+
+            foreach ($serverCandidates as $serverPath) {
+                if (is_file($serverPath)) {
+                    return rserves_admin_resolve_asset_url($candidate);
+                }
+            }
+        }
+
+        return rserves_admin_resolve_asset_url($candidates[count($candidates) - 1] ?? $normalized);
+    }
+}
+
+if (!function_exists('rserves_admin_department_id_from_college')) {
+    function rserves_admin_department_id_from_college(string $collegeName): ?int
+    {
+        $normalized = trim($collegeName);
+        if ($normalized === '') {
+            return null;
+        }
+
+        $map = [
+            'College of Education' => 1,
+            'College of Technology' => 2,
+            'College of Hospitality and Tourism Management' => 3,
+        ];
+
+        return $map[$normalized] ?? null;
+    }
+}
+
+$deptNames = [
+    1 => "College of Education",
+    2 => "College of Technology",
+    3 => "College of Hospitality and Tourism Management"
+];
 
 // Ensure photo column exists
 $checkCol = $conn->query("SHOW COLUMNS FROM administrators LIKE 'photo'");
@@ -46,6 +188,210 @@ $conn->query("CREATE TABLE IF NOT EXISTS section_advisers (
     FOREIGN KEY (instructor_id) REFERENCES instructors(inst_id) ON DELETE CASCADE,
     UNIQUE KEY unique_section_adviser (department_id, section)
 )");
+
+$conn->query("CREATE TABLE IF NOT EXISTS section_requests (
+    request_id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    year_level INT,
+    section VARCHAR(50),
+    adviser_id INT,
+    status ENUM('Pending', 'Approved', 'Declined', 'Completed') DEFAULT 'Pending',
+    decline_reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    approved_at DATETIME,
+    approved_by INT,
+    UNIQUE KEY unique_req (student_id)
+)");
+
+$conn->query("CREATE TABLE IF NOT EXISTS student_login_history (
+    login_id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45) DEFAULT NULL,
+    user_agent VARCHAR(255) DEFAULT NULL,
+    INDEX idx_student_login_history_student (student_id),
+    INDEX idx_student_login_history_login_at (login_at)
+)");
+
+$conn->query("CREATE TABLE IF NOT EXISTS student_announcements (
+    announcement_id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    instructor_id INT NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    sender_role VARCHAR(20) NOT NULL DEFAULT 'Instructor',
+    admin_id INT NULL DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_student_announcements_student (student_id),
+    INDEX idx_student_announcements_instructor (instructor_id),
+    INDEX idx_student_announcements_admin (admin_id)
+)");
+
+$studentAnnouncementsSenderRole = $conn->query("SHOW COLUMNS FROM student_announcements LIKE 'sender_role'");
+if ($studentAnnouncementsSenderRole && $studentAnnouncementsSenderRole->num_rows === 0) {
+    $conn->query("ALTER TABLE student_announcements ADD COLUMN sender_role VARCHAR(20) NOT NULL DEFAULT 'Instructor' AFTER message");
+}
+
+$studentAnnouncementsAdminId = $conn->query("SHOW COLUMNS FROM student_announcements LIKE 'admin_id'");
+if ($studentAnnouncementsAdminId && $studentAnnouncementsAdminId->num_rows === 0) {
+    $conn->query("ALTER TABLE student_announcements ADD COLUMN admin_id INT NULL DEFAULT NULL AFTER sender_role");
+}
+
+$adminEnrollmentEditableFields = [
+    'surname' => 's',
+    'given_name' => 's',
+    'middle_name' => 's',
+    'student_number' => 's',
+    'college' => 's',
+    'course' => 's',
+    'major' => 's',
+    'year_level' => 'i',
+    'section' => 's',
+    'city_address' => 's',
+    'gender' => 's',
+    'contact_number' => 's',
+    'email_address' => 's',
+    'birth_date' => 's',
+    'birth_place' => 's',
+    'provincial_address' => 's',
+    'religion' => 's',
+    'marital_status' => 's',
+    'father_name' => 's',
+    'father_occupation' => 's',
+    'father_company' => 's',
+    'father_company_address' => 's',
+    'father_contact' => 's',
+    'mother_name' => 's',
+    'mother_occupation' => 's',
+    'mother_company' => 's',
+    'mother_company_address' => 's',
+    'mother_contact' => 's',
+    'guardian_name' => 's',
+    'guardian_address' => 's',
+    'guardian_contact' => 's',
+    'tertiary_school' => 's',
+    'tertiary_address' => 's',
+    'tertiary_year_grad' => 's',
+    'tertiary_honors' => 's',
+    'secondary_school' => 's',
+    'secondary_address' => 's',
+    'secondary_year_grad' => 's',
+    'secondary_honors' => 's',
+    'primary_school' => 's',
+    'primary_address' => 's',
+    'primary_year_grad' => 's',
+    'primary_honors' => 's',
+    'height' => 's',
+    'weight' => 's',
+    'blood_type' => 's',
+    'health_problem' => 's',
+    'vaccination_status' => 's',
+    'vaccine_type' => 's',
+    'place_vaccination' => 's',
+    'date_vaccination' => 's',
+    'health_insurance' => 's',
+    'private_insurance_details' => 's',
+    'rss_assignment' => 's',
+    'assigned_job_position' => 's',
+    'inclusive_dates' => 's',
+    'rss_site_address' => 's',
+];
+
+$adminEnrollmentFieldGroups = [
+    [
+        'title' => 'Personal and Scholastic Information',
+        'fields' => [
+            ['name' => 'surname', 'label' => 'Surname'],
+            ['name' => 'given_name', 'label' => 'Given Name'],
+            ['name' => 'middle_name', 'label' => 'Middle Name'],
+            ['name' => 'student_number', 'label' => 'Student Number'],
+            ['name' => 'college', 'label' => 'College', 'type' => 'select', 'options' => array_keys($enrollment_program_catalog)],
+            ['name' => 'course', 'label' => 'Course'],
+            ['name' => 'major', 'label' => 'Major'],
+            ['name' => 'year_level', 'label' => 'Year Level', 'type' => 'select', 'options' => [
+                ['value' => '1', 'label' => '1st Year'],
+                ['value' => '2', 'label' => '2nd Year'],
+                ['value' => '3', 'label' => '3rd Year'],
+                ['value' => '4', 'label' => '4th Year'],
+            ]],
+            ['name' => 'section', 'label' => 'Section', 'type' => 'select', 'options' => [
+                ['value' => 'A', 'label' => 'A'],
+                ['value' => 'B', 'label' => 'B'],
+                ['value' => 'C', 'label' => 'C'],
+                ['value' => 'D', 'label' => 'D'],
+                ['value' => 'AE', 'label' => 'AE'],
+            ]],
+            ['name' => 'city_address', 'label' => 'City Address', 'type' => 'textarea'],
+            ['name' => 'gender', 'label' => 'Gender'],
+            ['name' => 'contact_number', 'label' => 'Contact Number'],
+            ['name' => 'email_address', 'label' => 'Email Address', 'type' => 'email'],
+            ['name' => 'birth_date', 'label' => 'Birth Date', 'type' => 'date'],
+            ['name' => 'birth_place', 'label' => 'Birth Place'],
+            ['name' => 'provincial_address', 'label' => 'Provincial Address', 'type' => 'textarea'],
+            ['name' => 'religion', 'label' => 'Religion'],
+            ['name' => 'marital_status', 'label' => 'Marital Status', 'type' => 'select', 'options' => $enrollment_marital_status_options],
+        ],
+    ],
+    [
+        'title' => 'Family Background',
+        'fields' => [
+            ['name' => 'father_name', 'label' => 'Father Name'],
+            ['name' => 'father_occupation', 'label' => 'Father Occupation'],
+            ['name' => 'father_company', 'label' => 'Father Company'],
+            ['name' => 'father_company_address', 'label' => 'Father Company Address', 'type' => 'textarea'],
+            ['name' => 'father_contact', 'label' => 'Father Contact'],
+            ['name' => 'mother_name', 'label' => 'Mother Name'],
+            ['name' => 'mother_occupation', 'label' => 'Mother Occupation'],
+            ['name' => 'mother_company', 'label' => 'Mother Company'],
+            ['name' => 'mother_company_address', 'label' => 'Mother Company Address', 'type' => 'textarea'],
+            ['name' => 'mother_contact', 'label' => 'Mother Contact'],
+            ['name' => 'guardian_name', 'label' => 'Guardian Name'],
+            ['name' => 'guardian_address', 'label' => 'Guardian Address', 'type' => 'textarea'],
+            ['name' => 'guardian_contact', 'label' => 'Guardian Contact'],
+        ],
+    ],
+    [
+        'title' => 'Educational Background',
+        'fields' => [
+            ['name' => 'tertiary_school', 'label' => 'Tertiary School'],
+            ['name' => 'tertiary_address', 'label' => 'Tertiary Address', 'type' => 'textarea'],
+            ['name' => 'tertiary_year_grad', 'label' => 'Tertiary Year Graduated'],
+            ['name' => 'tertiary_honors', 'label' => 'Tertiary Honors'],
+            ['name' => 'secondary_school', 'label' => 'Secondary School'],
+            ['name' => 'secondary_address', 'label' => 'Secondary Address', 'type' => 'textarea'],
+            ['name' => 'secondary_year_grad', 'label' => 'Secondary Year Graduated'],
+            ['name' => 'secondary_honors', 'label' => 'Secondary Honors'],
+            ['name' => 'primary_school', 'label' => 'Primary School'],
+            ['name' => 'primary_address', 'label' => 'Primary Address', 'type' => 'textarea'],
+            ['name' => 'primary_year_grad', 'label' => 'Primary Year Graduated'],
+            ['name' => 'primary_honors', 'label' => 'Primary Honors'],
+        ],
+    ],
+    [
+        'title' => 'Health Data',
+        'fields' => [
+            ['name' => 'height', 'label' => 'Height'],
+            ['name' => 'weight', 'label' => 'Weight'],
+            ['name' => 'blood_type', 'label' => 'Blood Type'],
+            ['name' => 'health_problem', 'label' => 'Health Problem'],
+            ['name' => 'vaccination_status', 'label' => 'Vaccination Status'],
+            ['name' => 'vaccine_type', 'label' => 'Type of Vaccine'],
+            ['name' => 'place_vaccination', 'label' => 'Place of Vaccination'],
+            ['name' => 'date_vaccination', 'label' => 'Date of Vaccination', 'type' => 'date'],
+            ['name' => 'health_insurance', 'label' => 'Health Insurance'],
+            ['name' => 'private_insurance_details', 'label' => 'Private Insurance Details'],
+        ],
+    ],
+    [
+        'title' => 'RSS Assignment',
+        'fields' => [
+            ['name' => 'rss_assignment', 'label' => 'RSS Assignment'],
+            ['name' => 'assigned_job_position', 'label' => 'Assigned Job Position'],
+            ['name' => 'inclusive_dates', 'label' => 'Inclusive Dates'],
+            ['name' => 'rss_site_address', 'label' => 'RSS Site Address', 'type' => 'textarea'],
+        ],
+    ],
+];
 
 // Handle Mark All Read
 if (isset($_POST['mark_all_read'])) {
@@ -172,6 +518,566 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_adviser'])) {
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'get_student_details')) {
+    $studentId = intval($_POST['student_id'] ?? 0);
+    if ($studentId <= 0) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'A valid student record is required.',
+        ], 422);
+    }
+
+    $studentStmt = $conn->prepare("
+        SELECT
+            s.stud_id,
+            s.firstname,
+            s.lastname,
+            s.mi,
+            s.email,
+            s.student_number,
+            COALESCE(s.year_level, 1) AS year_level,
+            COALESCE(s.section, 'A') AS section,
+            s.department_id,
+            s.photo,
+            d.department_name,
+            COALESCE((SELECT SUM(hours) FROM accomplishment_reports WHERE student_id = s.stud_id AND status = 'Approved'), 0) AS completed_hours,
+            (SELECT status FROM rss_waivers WHERE student_id = s.stud_id ORDER BY id DESC LIMIT 1) AS waiver_status,
+            (SELECT status FROM rss_agreements WHERE student_id = s.stud_id ORDER BY agreement_id DESC LIMIT 1) AS agreement_status,
+            (SELECT status FROM rss_enrollments WHERE student_id = s.stud_id ORDER BY enrollment_id DESC LIMIT 1) AS enrollment_status,
+            (SELECT enrollment_id FROM rss_enrollments WHERE student_id = s.stud_id ORDER BY enrollment_id DESC LIMIT 1) AS enrollment_id
+        FROM students s
+        LEFT JOIN departments d ON s.department_id = d.department_id
+        WHERE s.stud_id = ?
+        LIMIT 1
+    ");
+
+    if (!$studentStmt) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Unable to prepare the student lookup.',
+        ], 500);
+    }
+
+    $studentStmt->bind_param("i", $studentId);
+    $studentStmt->execute();
+    $student = $studentStmt->get_result()->fetch_assoc();
+    $studentStmt->close();
+
+    if (!$student) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Student record not found.',
+        ], 404);
+    }
+
+    $student['photo_url'] = rserves_admin_resolve_profile_photo_url($student['photo'] ?? null);
+    $student['waiver_status'] = $student['waiver_status'] ?? 'None';
+    $student['agreement_status'] = $student['agreement_status'] ?? 'None';
+    $student['enrollment_status'] = $student['enrollment_status'] ?? 'None';
+
+    $enrollment = null;
+    $enrollmentStmt = $conn->prepare("SELECT * FROM rss_enrollments WHERE student_id = ? ORDER BY enrollment_id DESC LIMIT 1");
+    if ($enrollmentStmt) {
+        $enrollmentStmt->bind_param("i", $studentId);
+        $enrollmentStmt->execute();
+        $enrollment = $enrollmentStmt->get_result()->fetch_assoc();
+        $enrollmentStmt->close();
+    }
+
+    if ($enrollment) {
+        $enrollment['photo_url'] = rserves_admin_resolve_asset_url($enrollment['photo_path'] ?? null);
+        $signatureImage = trim((string) ($enrollment['signature_image'] ?? ''));
+        $enrollment['signature_url'] = $signatureImage !== '' ? rserves_admin_resolve_asset_url($signatureImage) : null;
+    }
+
+    $loginHistory = [];
+    $historyStmt = $conn->prepare("
+        SELECT login_at, ip_address, user_agent
+        FROM student_login_history
+        WHERE student_id = ?
+        ORDER BY login_at DESC
+        LIMIT 15
+    ");
+    if ($historyStmt) {
+        $historyStmt->bind_param("i", $studentId);
+        $historyStmt->execute();
+        $historyResult = $historyStmt->get_result();
+        while ($row = $historyResult->fetch_assoc()) {
+            $loginHistory[] = $row;
+        }
+        $historyStmt->close();
+    }
+
+    $recentMessages = [];
+    $messageStmt = $conn->prepare("
+        SELECT announcement_id, subject, message, sender_role, created_at
+        FROM student_announcements
+        WHERE student_id = ?
+        ORDER BY created_at DESC
+        LIMIT 10
+    ");
+    if ($messageStmt) {
+        $messageStmt->bind_param("i", $studentId);
+        $messageStmt->execute();
+        $messageResult = $messageStmt->get_result();
+        while ($row = $messageResult->fetch_assoc()) {
+            $recentMessages[] = $row;
+        }
+        $messageStmt->close();
+    }
+
+    $recentReports = [];
+    $reportStmt = $conn->prepare("
+        SELECT id, work_date, activity, time_start, time_end, hours, status, photo, photo2, created_at
+        FROM accomplishment_reports
+        WHERE student_id = ?
+        ORDER BY created_at DESC
+        LIMIT 12
+    ");
+    if ($reportStmt) {
+        $reportStmt->bind_param("i", $studentId);
+        $reportStmt->execute();
+        $reportResult = $reportStmt->get_result();
+        while ($row = $reportResult->fetch_assoc()) {
+            $photos = [];
+            $photoOneUrl = rserves_admin_resolve_asset_url($row['photo'] ?? null);
+            $photoTwoUrl = rserves_admin_resolve_asset_url($row['photo2'] ?? null);
+
+            if ($photoOneUrl !== null) {
+                $photos[] = [
+                    'label' => 'Photo 1',
+                    'url' => $photoOneUrl,
+                ];
+            }
+
+            if ($photoTwoUrl !== null) {
+                $photos[] = [
+                    'label' => 'Photo 2',
+                    'url' => $photoTwoUrl,
+                ];
+            }
+
+            $row['activity'] = trim((string) preg_replace('/\[TaskID:\d+\]/', '', (string) ($row['activity'] ?? '')));
+            $row['photos'] = $photos;
+            unset($row['photo'], $row['photo2']);
+            $recentReports[] = $row;
+        }
+        $reportStmt->close();
+    }
+
+    rserves_admin_json_response([
+        'success' => true,
+        'student' => $student,
+        'enrollment' => $enrollment,
+        'login_history' => $loginHistory,
+        'recent_messages' => $recentMessages,
+        'recent_reports' => $recentReports,
+    ]);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'update_student_record')) {
+    $studentId = intval($_POST['student_id'] ?? 0);
+    if ($studentId <= 0) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'A valid student record is required.',
+        ], 422);
+    }
+
+    $studentStmt = $conn->prepare("
+        SELECT stud_id, firstname, lastname, mi, email, student_number, COALESCE(year_level, 1) AS year_level,
+               COALESCE(section, 'A') AS section, department_id
+        FROM students
+        WHERE stud_id = ?
+        LIMIT 1
+    ");
+    if (!$studentStmt) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Unable to prepare the student update.',
+        ], 500);
+    }
+
+    $studentStmt->bind_param("i", $studentId);
+    $studentStmt->execute();
+    $studentRow = $studentStmt->get_result()->fetch_assoc();
+    $studentStmt->close();
+
+    if (!$studentRow) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Student record not found.',
+        ], 404);
+    }
+
+    $enrollmentLookup = $conn->prepare("SELECT enrollment_id FROM rss_enrollments WHERE student_id = ? ORDER BY enrollment_id DESC LIMIT 1");
+    if (!$enrollmentLookup) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Unable to locate the enrollment record.',
+        ], 500);
+    }
+
+    $enrollmentLookup->bind_param("i", $studentId);
+    $enrollmentLookup->execute();
+    $enrollmentRow = $enrollmentLookup->get_result()->fetch_assoc();
+    $enrollmentLookup->close();
+
+    $enrollmentId = intval($enrollmentRow['enrollment_id'] ?? 0);
+    if ($enrollmentId <= 0) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'This student does not have an enrollment record to update yet.',
+        ], 404);
+    }
+
+    $enrollmentValues = [];
+    $enrollmentTypes = '';
+    $enrollmentSetClauses = [];
+    $normalizedEnrollment = [];
+
+    foreach ($adminEnrollmentEditableFields as $field => $bindType) {
+        if (!array_key_exists($field, $_POST)) {
+            continue;
+        }
+
+        $value = $_POST[$field];
+
+        if ($field === 'college') {
+            $value = normalizeEnrollmentCollege((string) $value, $enrollment_college_aliases);
+        } elseif ($field === 'year_level') {
+            $value = max(1, min(4, intval($value)));
+        } else {
+            $value = trim((string) $value);
+        }
+
+        $normalizedEnrollment[$field] = $value;
+        $enrollmentSetClauses[] = $field . ' = ?';
+        $enrollmentTypes .= $bindType;
+        $enrollmentValues[] = $value;
+    }
+
+    if (empty($enrollmentSetClauses)) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'No enrollment fields were provided for update.',
+        ], 422);
+    }
+
+    $newDepartmentId = intval($studentRow['department_id'] ?? 0);
+    if (isset($normalizedEnrollment['college'])) {
+        $mappedDepartmentId = rserves_admin_department_id_from_college((string) $normalizedEnrollment['college']);
+        if ($mappedDepartmentId !== null) {
+            $newDepartmentId = $mappedDepartmentId;
+        }
+    }
+
+    $newYearLevel = intval($normalizedEnrollment['year_level'] ?? $studentRow['year_level']);
+    $newSection = trim((string) ($normalizedEnrollment['section'] ?? $studentRow['section']));
+
+    $studentUpdates = [];
+    $studentTypes = '';
+    $studentValues = [];
+    $studentFieldMap = [
+        'given_name' => ['column' => 'firstname', 'type' => 's'],
+        'surname' => ['column' => 'lastname', 'type' => 's'],
+        'middle_name' => ['column' => 'mi', 'type' => 's'],
+        'student_number' => ['column' => 'student_number', 'type' => 's'],
+        'email_address' => ['column' => 'email', 'type' => 's'],
+        'year_level' => ['column' => 'year_level', 'type' => 'i'],
+        'section' => ['column' => 'section', 'type' => 's'],
+    ];
+
+    foreach ($studentFieldMap as $enrollmentField => $mapping) {
+        if (!array_key_exists($enrollmentField, $normalizedEnrollment)) {
+            continue;
+        }
+
+        $studentUpdates[] = $mapping['column'] . ' = ?';
+        $studentTypes .= $mapping['type'];
+        $studentValues[] = $normalizedEnrollment[$enrollmentField];
+    }
+
+    if ($newDepartmentId !== intval($studentRow['department_id'] ?? 0)) {
+        $studentUpdates[] = 'department_id = ?';
+        $studentTypes .= 'i';
+        $studentValues[] = $newDepartmentId;
+    }
+
+    try {
+        $conn->begin_transaction();
+
+        $updateEnrollmentSql = "UPDATE rss_enrollments SET " . implode(', ', $enrollmentSetClauses) . " WHERE enrollment_id = ?";
+        $updateEnrollmentStmt = $conn->prepare($updateEnrollmentSql);
+        if (!$updateEnrollmentStmt) {
+            throw new RuntimeException('Unable to prepare the enrollment update.');
+        }
+
+        $enrollmentTypesWithId = $enrollmentTypes . 'i';
+        $enrollmentValuesWithId = $enrollmentValues;
+        $enrollmentValuesWithId[] = $enrollmentId;
+        if (!rserves_admin_bind_params($updateEnrollmentStmt, $enrollmentTypesWithId, $enrollmentValuesWithId) || !$updateEnrollmentStmt->execute()) {
+            $errorMessage = $updateEnrollmentStmt->error ?: 'Unable to update the enrollment record.';
+            $updateEnrollmentStmt->close();
+            throw new RuntimeException($errorMessage);
+        }
+        $updateEnrollmentStmt->close();
+
+        if (!empty($studentUpdates)) {
+            $updateStudentSql = "UPDATE students SET " . implode(', ', $studentUpdates) . " WHERE stud_id = ?";
+            $updateStudentStmt = $conn->prepare($updateStudentSql);
+            if (!$updateStudentStmt) {
+                throw new RuntimeException('Unable to prepare the student profile update.');
+            }
+
+            $studentTypesWithId = $studentTypes . 'i';
+            $studentValuesWithId = $studentValues;
+            $studentValuesWithId[] = $studentId;
+            if (!rserves_admin_bind_params($updateStudentStmt, $studentTypesWithId, $studentValuesWithId) || !$updateStudentStmt->execute()) {
+                $errorMessage = $updateStudentStmt->error ?: 'Unable to update the student profile.';
+                $updateStudentStmt->close();
+                throw new RuntimeException($errorMessage);
+            }
+            $updateStudentStmt->close();
+        }
+
+        $adviserId = 0;
+        if ($newDepartmentId > 0 && $newSection !== '') {
+            $adviserStmt = $conn->prepare("
+                SELECT instructor_id
+                FROM section_advisers
+                WHERE department_id = ? AND section = ?
+                ORDER BY id DESC
+                LIMIT 1
+            ");
+
+            if ($adviserStmt) {
+                $adviserStmt->bind_param("is", $newDepartmentId, $newSection);
+                $adviserStmt->execute();
+                $adviserRow = $adviserStmt->get_result()->fetch_assoc();
+                $adviserId = intval($adviserRow['instructor_id'] ?? 0);
+                $adviserStmt->close();
+            }
+        }
+
+        $sectionRequestStmt = $conn->prepare("
+            INSERT INTO section_requests (student_id, year_level, section, adviser_id, status)
+            VALUES (?, ?, ?, ?, 'Pending')
+            ON DUPLICATE KEY UPDATE
+                year_level = VALUES(year_level),
+                section = VALUES(section),
+                adviser_id = VALUES(adviser_id)
+        ");
+        if ($sectionRequestStmt) {
+            $sectionRequestStmt->bind_param("iisi", $studentId, $newYearLevel, $newSection, $adviserId);
+            $sectionRequestStmt->execute();
+            $sectionRequestStmt->close();
+        }
+
+        if ($adviserId > 0) {
+            $adviserLinkStmt = $conn->prepare("UPDATE students SET instructor_id = ? WHERE stud_id = ?");
+            if ($adviserLinkStmt) {
+                $adviserLinkStmt->bind_param("ii", $adviserId, $studentId);
+                $adviserLinkStmt->execute();
+                $adviserLinkStmt->close();
+            }
+        } else {
+            $clearAdviserStmt = $conn->prepare("UPDATE students SET instructor_id = NULL WHERE stud_id = ?");
+            if ($clearAdviserStmt) {
+                $clearAdviserStmt->bind_param("i", $studentId);
+                $clearAdviserStmt->execute();
+                $clearAdviserStmt->close();
+            }
+        }
+
+        $conn->commit();
+    } catch (Throwable $e) {
+        $conn->rollback();
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => $e->getMessage(),
+        ], 500);
+    }
+
+    rserves_admin_json_response([
+        'success' => true,
+        'message' => 'Student enrollment information was updated successfully.',
+        'updated' => [
+            'student_id' => $studentId,
+            'department_id' => $newDepartmentId,
+            'department_name' => $deptNames[$newDepartmentId] ?? ('Department ' . $newDepartmentId),
+            'year_level' => $newYearLevel,
+            'section' => $newSection,
+        ],
+    ]);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'reset_student_password')) {
+    $studentId = intval($_POST['student_id'] ?? 0);
+    if ($studentId <= 0) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'A valid student record is required.',
+        ], 422);
+    }
+
+    $studentLookup = $conn->prepare("SELECT firstname, lastname, email FROM students WHERE stud_id = ? LIMIT 1");
+    if (!$studentLookup) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Unable to prepare the password reset request.',
+        ], 500);
+    }
+
+    $studentLookup->bind_param("i", $studentId);
+    $studentLookup->execute();
+    $student = $studentLookup->get_result()->fetch_assoc();
+    $studentLookup->close();
+
+    if (!$student) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Student record not found.',
+        ], 404);
+    }
+
+    $temporaryPassword = rserves_admin_generate_temp_password();
+    $passwordHash = password_hash($temporaryPassword, PASSWORD_DEFAULT);
+    $resetStmt = $conn->prepare("UPDATE students SET password = ? WHERE stud_id = ?");
+    if (!$resetStmt) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Unable to prepare the password reset update.',
+        ], 500);
+    }
+
+    $resetStmt->bind_param("si", $passwordHash, $studentId);
+    $passwordUpdated = $resetStmt->execute();
+    $resetError = $resetStmt->error;
+    $resetStmt->close();
+
+    if (!$passwordUpdated) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => $resetError !== '' ? $resetError : 'The password could not be reset.',
+        ], 500);
+    }
+
+    $studentName = trim(((string) ($student['firstname'] ?? '')) . ' ' . ((string) ($student['lastname'] ?? '')));
+    $emailStatus = null;
+    if (trim((string) ($student['email'] ?? '')) !== '') {
+        $emailStatus = sendEmail(
+            (string) $student['email'],
+            $studentName !== '' ? $studentName : 'Student',
+            'RServeS Password Reset',
+            "Hello {$studentName},\n\nYour RServeS account password has been reset by the administrator.\n\nTemporary password: {$temporaryPassword}\n\nPlease sign in and change this password immediately."
+        );
+    }
+
+    rserves_admin_json_response([
+        'success' => true,
+        'message' => 'Temporary password generated successfully.',
+        'temporary_password' => $temporaryPassword,
+        'email_sent' => $emailStatus === true,
+        'email_status' => $emailStatus === true
+            ? 'The temporary password was emailed to the student.'
+            : ((is_string($emailStatus) && $emailStatus !== '') ? 'The password was reset, but email delivery failed: ' . $emailStatus : 'The password was reset. Share the temporary password securely with the student if needed.'),
+    ]);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'send_direct_message')) {
+    $studentId = intval($_POST['student_id'] ?? 0);
+    $subject = trim((string) ($_POST['subject'] ?? ''));
+    $messageBody = trim((string) ($_POST['message'] ?? ''));
+
+    if ($studentId <= 0) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'A valid student record is required.',
+        ], 422);
+    }
+
+    if ($subject === '' || $messageBody === '') {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Please provide both a subject and a message.',
+        ], 422);
+    }
+
+    $studentLookup = $conn->prepare("SELECT firstname, lastname, email FROM students WHERE stud_id = ? LIMIT 1");
+    if (!$studentLookup) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Unable to prepare the direct message lookup.',
+        ], 500);
+    }
+
+    $studentLookup->bind_param("i", $studentId);
+    $studentLookup->execute();
+    $student = $studentLookup->get_result()->fetch_assoc();
+    $studentLookup->close();
+
+    if (!$student) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Student record not found.',
+        ], 404);
+    }
+
+    $adminId = intval($_SESSION['adm_id'] ?? 0);
+    $messageStmt = $conn->prepare("
+        INSERT INTO student_announcements (student_id, instructor_id, subject, message, sender_role, admin_id)
+        VALUES (?, 0, ?, ?, 'Administrator', ?)
+    ");
+
+    if (!$messageStmt) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => 'Unable to prepare the direct message.',
+        ], 500);
+    }
+
+    $messageStmt->bind_param("issi", $studentId, $subject, $messageBody, $adminId);
+    $saved = $messageStmt->execute();
+    $insertedId = intval($messageStmt->insert_id);
+    $messageError = $messageStmt->error;
+    $messageStmt->close();
+
+    if (!$saved) {
+        rserves_admin_json_response([
+            'success' => false,
+            'message' => $messageError !== '' ? $messageError : 'The direct message could not be saved.',
+        ], 500);
+    }
+
+    $studentName = trim(((string) ($student['firstname'] ?? '')) . ' ' . ((string) ($student['lastname'] ?? '')));
+    $emailStatus = null;
+    if (trim((string) ($student['email'] ?? '')) !== '') {
+        $emailStatus = sendEmail(
+            (string) $student['email'],
+            $studentName !== '' ? $studentName : 'Student',
+            'Direct Message from Administration: ' . $subject,
+            $messageBody
+        );
+    }
+
+    rserves_admin_json_response([
+        'success' => true,
+        'message' => 'Direct message sent successfully.',
+        'email_sent' => $emailStatus === true,
+        'email_status' => $emailStatus === true
+            ? 'A copy of the message was also emailed to the student.'
+            : ((is_string($emailStatus) && $emailStatus !== '') ? 'The portal message was saved, but email delivery failed: ' . $emailStatus : 'The portal message was saved for the student.'),
+        'saved_message' => [
+            'announcement_id' => $insertedId,
+            'subject' => $subject,
+            'message' => $messageBody,
+            'sender_role' => 'Administrator',
+            'created_at' => date('Y-m-d H:i:s'),
+        ],
+    ]);
+}
+
 // Handle Profile Update
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     $adm_id = $_SESSION['adm_id'];
@@ -257,13 +1163,6 @@ if ($adminQuery->num_rows > 0) {
     $admin_photo = "https://via.placeholder.com/150";
 }
 
-// Department names
-$deptNames = [
-    1 => "College of Education",
-    2 => "College of Technology",
-    3 => "College of Hospitality and Tourism Management"
-];
-
 $departments = [];
 
 // ✅ Fetch students
@@ -273,14 +1172,15 @@ $students = $conn->query("
         s.firstname,
         s.lastname,
         s.email,
+        s.student_number,
         s.department_id,
         COALESCE(s.year_level, 1) as year_level,
         COALESCE(s.section, 'A') as section,
         COALESCE((SELECT SUM(hours) FROM accomplishment_reports WHERE student_id = s.stud_id AND status = 'Approved'), 0) as completed_hours,
-        (SELECT status FROM rss_waivers WHERE student_id = s.stud_id LIMIT 1) as waiver_status,
-        (SELECT status FROM rss_agreements WHERE student_id = s.stud_id LIMIT 1) as agreement_status,
-        (SELECT status FROM rss_enrollments WHERE student_id = s.stud_id LIMIT 1) as enrollment_status,
-        (SELECT enrollment_id FROM rss_enrollments WHERE student_id = s.stud_id LIMIT 1) as enrollment_id
+        (SELECT status FROM rss_waivers WHERE student_id = s.stud_id ORDER BY id DESC LIMIT 1) as waiver_status,
+        (SELECT status FROM rss_agreements WHERE student_id = s.stud_id ORDER BY agreement_id DESC LIMIT 1) as agreement_status,
+        (SELECT status FROM rss_enrollments WHERE student_id = s.stud_id ORDER BY enrollment_id DESC LIMIT 1) as enrollment_status,
+        (SELECT enrollment_id FROM rss_enrollments WHERE student_id = s.stud_id ORDER BY enrollment_id DESC LIMIT 1) as enrollment_id
     FROM students s
     ORDER BY s.department_id, s.section, s.lastname
 ");
@@ -316,8 +1216,11 @@ if ($students && $students->num_rows > 0) {
         
         $studentRow = [
             'id' => $s['stud_id'],
+            'stud_id' => $s['stud_id'],
             'name' => $s['firstname'] . ' ' . $s['lastname'],
             'email' => $s['email'],
+            'student_number' => $s['student_number'],
+            'department_id' => $deptId,
             'year_level' => $s['year_level'],
             'section' => $s['section'],
             'completed_hours' => $hours,
@@ -1510,6 +2413,160 @@ $recentActivity = array_slice($notifications, 0, 4);
             text-transform: uppercase;
         }
 
+        .student-record-shell {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        .student-record-summary {
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 22px;
+            padding: 1.25rem;
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.96) 0%, rgba(240, 246, 255, 0.92) 100%);
+        }
+
+        .student-record-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.9rem;
+            margin-top: 1rem;
+        }
+
+        .student-record-metric {
+            border-radius: 18px;
+            padding: 0.95rem 1rem;
+            background: rgba(255, 255, 255, 0.86);
+            border: 1px solid rgba(15, 23, 42, 0.06);
+        }
+
+        .student-record-metric span {
+            display: block;
+            color: var(--admin-muted);
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .student-record-metric strong {
+            display: block;
+            margin-top: 0.35rem;
+            font-size: 1rem;
+            color: var(--admin-ink);
+        }
+
+        .student-record-section {
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 20px;
+            background: #fff;
+            overflow: hidden;
+        }
+
+        .student-record-section .accordion-button {
+            font-weight: 800;
+            color: var(--admin-ink);
+            background: rgba(248, 251, 255, 0.92);
+        }
+
+        .student-record-section .accordion-button:not(.collapsed) {
+            color: var(--admin-accent-deep);
+            background: rgba(232, 241, 255, 0.96);
+            box-shadow: inset 0 -1px 0 rgba(15, 23, 42, 0.06);
+        }
+
+        .student-record-form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1rem;
+        }
+
+        .student-record-form-grid .full-span {
+            grid-column: 1 / -1;
+        }
+
+        .student-record-photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+        }
+
+        .student-record-photo-card {
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 18px;
+            background: #fff;
+            padding: 0.9rem;
+            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+        }
+
+        .student-record-photo-card img {
+            width: 100%;
+            max-height: 210px;
+            object-fit: cover;
+            border-radius: 14px;
+            background: #edf2f7;
+        }
+
+        .student-record-proof-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 0.85rem;
+            margin-top: 0.85rem;
+        }
+
+        .student-record-proof-thumb {
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            background: #f8fafc;
+        }
+
+        .student-record-proof-thumb img {
+            width: 100%;
+            height: 140px;
+            object-fit: cover;
+            display: block;
+        }
+
+        .student-record-proof-caption {
+            padding: 0.6rem 0.7rem;
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--admin-ink);
+        }
+
+        .student-record-history-table th,
+        .student-record-history-table td {
+            font-size: 0.92rem;
+            vertical-align: top;
+        }
+
+        .student-record-submission {
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 18px;
+            padding: 1rem;
+            background: rgba(248, 251, 255, 0.78);
+        }
+
+        .student-record-message-item {
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            border-radius: 18px;
+            padding: 0.95rem 1rem;
+            background: #fff;
+        }
+
+        .student-record-message-item + .student-record-message-item,
+        .student-record-submission + .student-record-submission {
+            margin-top: 0.85rem;
+        }
+
+        .student-record-inline-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
         @media (max-width: 1399px) {
             .admin-overview-top-grid {
                 grid-template-columns: minmax(0, 1.5fr) repeat(2, minmax(0, 1fr));
@@ -1568,6 +2625,10 @@ $recentActivity = array_slice($notifications, 0, 4);
             .admin-department-footer {
                 flex-direction: column;
                 align-items: flex-start;
+            }
+
+            .student-record-form-grid .full-span {
+                grid-column: auto;
             }
         }
 </style>
@@ -2033,8 +3094,503 @@ $recentActivity = array_slice($notifications, 0, 4);
 <script>
     const adminDepartments = <?php echo json_encode($departments); ?>;
     const adminNotifications = <?php echo json_encode($notifications); ?>;
+    const adminEnrollmentFieldGroups = <?php echo json_encode($adminEnrollmentFieldGroups); ?>;
+    let studentRecordModalInstance = null;
+    let activeStudentRecord = null;
 
     // Menu toggle logic removed as we use mobile nav on mobile and sidebar on desktop
+
+    function getStudentRecordModalInstance() {
+        const modalEl = document.getElementById('studentRecordModal');
+        if (!modalEl) return null;
+        if (!studentRecordModalInstance) {
+            studentRecordModalInstance = new bootstrap.Modal(modalEl);
+        }
+        return studentRecordModalInstance;
+    }
+
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function nl2brSafe(value) {
+        return escapeHtml(value).replace(/\r?\n/g, '<br>');
+    }
+
+    function formatAdminDateTime(value) {
+        if (!value) return 'Not available';
+        const parsed = new Date(String(value).replace(' ', 'T'));
+        if (Number.isNaN(parsed.getTime())) {
+            return escapeHtml(value);
+        }
+        return parsed.toLocaleString();
+    }
+
+    function adminRecordMetric(label, value) {
+        return `
+            <div class="student-record-metric">
+                <span>${escapeHtml(label)}</span>
+                <strong>${value}</strong>
+            </div>
+        `;
+    }
+
+    function renderEnrollmentField(field, values) {
+        const fieldName = field.name;
+        const rawValue = values && values[fieldName] != null ? values[fieldName] : '';
+        const value = String(rawValue);
+        const type = field.type || 'text';
+        const isTextarea = type === 'textarea';
+        const wrapperClass = isTextarea ? 'full-span' : '';
+
+        if (type === 'select') {
+            const options = (field.options || []).map(option => {
+                const optionValue = typeof option === 'string' ? option : option.value;
+                const optionLabel = typeof option === 'string' ? option : option.label;
+                const selected = String(optionValue) === value ? 'selected' : '';
+                return `<option value="${escapeHtml(optionValue)}" ${selected}>${escapeHtml(optionLabel)}</option>`;
+            }).join('');
+
+            return `
+                <div class="${wrapperClass}">
+                    <label class="form-label fw-semibold">${escapeHtml(field.label)}</label>
+                    <select class="form-select" name="${escapeHtml(fieldName)}">
+                        <option value="">Select</option>
+                        ${options}
+                    </select>
+                </div>
+            `;
+        }
+
+        if (isTextarea) {
+            return `
+                <div class="${wrapperClass}">
+                    <label class="form-label fw-semibold">${escapeHtml(field.label)}</label>
+                    <textarea class="form-control" rows="3" name="${escapeHtml(fieldName)}">${escapeHtml(value)}</textarea>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="${wrapperClass}">
+                <label class="form-label fw-semibold">${escapeHtml(field.label)}</label>
+                <input type="${escapeHtml(type)}" class="form-control" name="${escapeHtml(fieldName)}" value="${escapeHtml(value)}">
+            </div>
+        `;
+    }
+
+    function renderEnrollmentEditor(enrollment) {
+        if (!enrollment) {
+            return '<div class="alert alert-warning mb-0">This student has not submitted an enrollment form yet.</div>';
+        }
+
+        const photoCards = [];
+        if (enrollment.photo_url) {
+            photoCards.push(`
+                <div class="student-record-photo-card">
+                    <div class="small text-uppercase text-muted fw-bold mb-2">Enrollment Photo</div>
+                    <a href="${escapeHtml(enrollment.photo_url)}" target="_blank" rel="noopener noreferrer">
+                        <img src="${escapeHtml(enrollment.photo_url)}" alt="Enrollment Photo">
+                    </a>
+                </div>
+            `);
+        }
+        if (enrollment.signature_url) {
+            photoCards.push(`
+                <div class="student-record-photo-card">
+                    <div class="small text-uppercase text-muted fw-bold mb-2">Student Signature</div>
+                    <a href="${escapeHtml(enrollment.signature_url)}" target="_blank" rel="noopener noreferrer">
+                        <img src="${escapeHtml(enrollment.signature_url)}" alt="Student Signature">
+                    </a>
+                </div>
+            `);
+        }
+
+        const groupsHtml = adminEnrollmentFieldGroups.map(group => `
+            <div class="mb-4">
+                <h6 class="fw-bold mb-3">${escapeHtml(group.title)}</h6>
+                <div class="student-record-form-grid">
+                    ${(group.fields || []).map(field => renderEnrollmentField(field, enrollment)).join('')}
+                </div>
+            </div>
+        `).join('');
+
+        return `
+            ${photoCards.length > 0 ? `<div class="student-record-photo-grid mb-4">${photoCards.join('')}</div>` : ''}
+            <form id="studentEnrollmentEditForm">
+                <input type="hidden" name="student_id" value="${escapeHtml(enrollment.student_id || ((activeStudentRecord && activeStudentRecord.student) ? activeStudentRecord.student.stud_id : '') || '')}">
+                ${groupsHtml}
+                <div class="d-flex justify-content-end">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save me-2"></i>Save Enrollment Changes
+                    </button>
+                </div>
+            </form>
+        `;
+    }
+
+    function renderLoginHistory(history) {
+        if (!Array.isArray(history) || history.length === 0) {
+            return '<div class="text-muted">No successful student sign-ins have been recorded yet.</div>';
+        }
+
+        const rows = history.map(entry => `
+            <tr>
+                <td>${formatAdminDateTime(entry.login_at)}</td>
+                <td>${escapeHtml(entry.ip_address || 'Unknown')}</td>
+                <td>${escapeHtml(entry.user_agent || 'Unknown device')}</td>
+            </tr>
+        `).join('');
+
+        return `
+            <div class="table-responsive">
+                <table class="table table-hover student-record-history-table mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Logged In At</th>
+                            <th>IP Address</th>
+                            <th>Device / Browser</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    function renderMessageHistory(messages) {
+        if (!Array.isArray(messages) || messages.length === 0) {
+            return '<div class="text-muted">No direct or announcement messages are available for this student yet.</div>';
+        }
+
+        return messages.map(entry => `
+            <div class="student-record-message-item">
+                <div class="d-flex justify-content-between align-items-start gap-3">
+                    <div>
+                        <div class="fw-bold">${escapeHtml(entry.subject || 'Untitled message')}</div>
+                        <div class="small text-muted">${escapeHtml(entry.sender_role || 'Instructor')}</div>
+                    </div>
+                    <div class="small text-muted text-nowrap">${formatAdminDateTime(entry.created_at)}</div>
+                </div>
+                <div class="mt-2">${nl2brSafe(entry.message || '')}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderSubmissionPhotos(reports) {
+        if (!Array.isArray(reports) || reports.length === 0) {
+            return '<div class="text-muted">No accomplishment submissions are available for this student yet.</div>';
+        }
+
+        return reports.map(report => {
+            const statusBadge = getAdminStatusBadge(report.status || 'Pending');
+            const photos = Array.isArray(report.photos) ? report.photos : [];
+            const photoHtml = photos.length > 0
+                ? `
+                    <div class="student-record-proof-grid">
+                        ${photos.map(photo => `
+                            <a href="${escapeHtml(photo.url)}" target="_blank" rel="noopener noreferrer" class="student-record-proof-thumb text-decoration-none">
+                                <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.label || 'Proof photo')}">
+                                <div class="student-record-proof-caption">${escapeHtml(photo.label || 'Proof photo')}</div>
+                            </a>
+                        `).join('')}
+                    </div>
+                `
+                : '<div class="small text-muted mt-2">No proof photos submitted for this report.</div>';
+
+            return `
+                <div class="student-record-submission">
+                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                        <div>
+                            <div class="fw-bold">${escapeHtml(report.activity || 'Activity')}</div>
+                            <div class="small text-muted">
+                                ${escapeHtml(report.work_date || 'No work date')}
+                                ${report.time_start || report.time_end ? ` | ${escapeHtml(report.time_start || '--')} - ${escapeHtml(report.time_end || '--')}` : ''}
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <div class="small text-muted">${formatAdminDateTime(report.created_at)}</div>
+                            <div class="mt-1">${statusBadge}</div>
+                        </div>
+                    </div>
+                    <div class="small text-muted mt-2">Hours submitted: ${escapeHtml(report.hours || '0')}</div>
+                    ${photoHtml}
+                </div>
+            `;
+        }).join('');
+    }
+
+    async function adminPostAction(formData) {
+        const response = await fetch('admin_dashboard.php', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || 'Request failed.');
+        }
+
+        return data;
+    }
+
+    function renderStudentRecord(record) {
+        const modalBody = document.getElementById('studentRecordBody');
+        const modalTitle = document.getElementById('studentRecordModalTitle');
+        const modalSubtitle = document.getElementById('studentRecordModalSubtitle');
+        const enrollmentLink = document.getElementById('studentRecordEnrollmentLink');
+        const resetButton = document.getElementById('studentResetPasswordBtn');
+        if (!modalBody || !record || !record.student) return;
+
+        const student = record.student;
+        const enrollment = record.enrollment;
+        const studentName = [student.firstname, student.mi ? `${student.mi}.` : '', student.lastname].filter(Boolean).join(' ');
+        const studentPhotoHtml = student.photo_url
+            ? `<img src="${escapeHtml(student.photo_url)}" alt="${escapeHtml(studentName)}" class="rounded-circle border" style="width:72px;height:72px;object-fit:cover;">`
+            : `<div class="rounded-circle d-inline-flex align-items-center justify-content-center border bg-light fw-bold" style="width:72px;height:72px;">${escapeHtml((student.firstname || 'S').charAt(0).toUpperCase())}</div>`;
+
+        modalTitle.textContent = studentName || 'Student Record';
+        modalSubtitle.textContent = student.department_name ? `${student.department_name} - Section ${student.section || 'N/A'}` : `Section ${student.section || 'N/A'}`;
+
+        if (enrollmentLink) {
+            if (student.enrollment_id) {
+                enrollmentLink.href = `verify_enrollment.php?id=${encodeURIComponent(student.enrollment_id)}`;
+                enrollmentLink.classList.remove('d-none');
+            } else {
+                enrollmentLink.classList.add('d-none');
+            }
+        }
+
+        if (resetButton) {
+            resetButton.dataset.studentId = student.stud_id;
+        }
+
+        modalBody.innerHTML = `
+            <div class="student-record-shell">
+                <div class="student-record-summary">
+                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                        <div class="d-flex align-items-center gap-3">
+                            ${studentPhotoHtml}
+                            <div>
+                                <h4 class="mb-1">${escapeHtml(studentName || 'Student')}</h4>
+                                <div class="text-muted">${escapeHtml(student.email || 'No email address')}</div>
+                                <div class="small text-muted mt-1">Student No. ${escapeHtml(student.student_number || 'Not set')}</div>
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <div class="student-record-metric">
+                                <span>Waiver</span>
+                                <strong>${getAdminStatusBadge(student.waiver_status || 'None')}</strong>
+                            </div>
+                            <div class="student-record-metric">
+                                <span>Agreement</span>
+                                <strong>${getAdminStatusBadge(student.agreement_status || 'None')}</strong>
+                            </div>
+                            <div class="student-record-metric">
+                                <span>Enrollment</span>
+                                <strong>${getAdminStatusBadge(student.enrollment_status || 'None')}</strong>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="student-record-summary-grid">
+                        ${adminRecordMetric('Year Level', escapeHtml(student.year_level || 'N/A'))}
+                        ${adminRecordMetric('Section', escapeHtml(student.section || 'N/A'))}
+                        ${adminRecordMetric('Completed Hours', `${escapeHtml(student.completed_hours || 0)} / 300`)}
+                        ${adminRecordMetric('Last Login', record.login_history && record.login_history[0] ? formatAdminDateTime(record.login_history[0].login_at) : 'No history yet')}
+                    </div>
+                </div>
+
+                <div class="accordion" id="studentRecordAccordion">
+                    <div class="accordion-item student-record-section">
+                        <h2 class="accordion-header" id="studentRecordHeadingEnrollment">
+                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#studentRecordCollapseEnrollment" aria-expanded="true" aria-controls="studentRecordCollapseEnrollment">
+                                Editable Enrollment Information
+                            </button>
+                        </h2>
+                        <div id="studentRecordCollapseEnrollment" class="accordion-collapse collapse show" aria-labelledby="studentRecordHeadingEnrollment" data-bs-parent="#studentRecordAccordion">
+                            <div class="accordion-body">
+                                ${renderEnrollmentEditor(enrollment)}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item student-record-section">
+                        <h2 class="accordion-header" id="studentRecordHeadingHistory">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#studentRecordCollapseHistory" aria-expanded="false" aria-controls="studentRecordCollapseHistory">
+                                Login History
+                            </button>
+                        </h2>
+                        <div id="studentRecordCollapseHistory" class="accordion-collapse collapse" aria-labelledby="studentRecordHeadingHistory" data-bs-parent="#studentRecordAccordion">
+                            <div class="accordion-body">
+                                ${renderLoginHistory(record.login_history)}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item student-record-section">
+                        <h2 class="accordion-header" id="studentRecordHeadingMessages">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#studentRecordCollapseMessages" aria-expanded="false" aria-controls="studentRecordCollapseMessages">
+                                Direct Message
+                            </button>
+                        </h2>
+                        <div id="studentRecordCollapseMessages" class="accordion-collapse collapse" aria-labelledby="studentRecordHeadingMessages" data-bs-parent="#studentRecordAccordion">
+                            <div class="accordion-body">
+                                <form id="studentDirectMessageForm" class="mb-4">
+                                    <input type="hidden" name="student_id" value="${escapeHtml(student.stud_id)}">
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">Subject</label>
+                                        <input type="text" class="form-control" name="subject" maxlength="255" placeholder="Enter a private subject" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">Message</label>
+                                        <textarea class="form-control" name="message" rows="4" placeholder="Write a private message to the student" required></textarea>
+                                    </div>
+                                    <div class="d-flex justify-content-end">
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="fas fa-paper-plane me-2"></i>Send Direct Message
+                                        </button>
+                                    </div>
+                                </form>
+                                <div>
+                                    <h6 class="fw-bold mb-3">Recent Messages</h6>
+                                    ${renderMessageHistory(record.recent_messages)}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item student-record-section">
+                        <h2 class="accordion-header" id="studentRecordHeadingPhotos">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#studentRecordCollapsePhotos" aria-expanded="false" aria-controls="studentRecordCollapsePhotos">
+                                Submitted Photos and Reports
+                            </button>
+                        </h2>
+                        <div id="studentRecordCollapsePhotos" class="accordion-collapse collapse" aria-labelledby="studentRecordHeadingPhotos" data-bs-parent="#studentRecordAccordion">
+                            <div class="accordion-body">
+                                ${renderSubmissionPhotos(record.recent_reports)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const enrollmentForm = document.getElementById('studentEnrollmentEditForm');
+        if (enrollmentForm) {
+            enrollmentForm.addEventListener('submit', handleStudentEnrollmentSave);
+        }
+
+        const directMessageForm = document.getElementById('studentDirectMessageForm');
+        if (directMessageForm) {
+            directMessageForm.addEventListener('submit', handleStudentDirectMessage);
+        }
+
+        if (resetButton) {
+            resetButton.onclick = handleStudentPasswordReset;
+        }
+    }
+
+    async function openStudentRecord(studentId) {
+        const modal = getStudentRecordModalInstance();
+        const modalBody = document.getElementById('studentRecordBody');
+        const modalTitle = document.getElementById('studentRecordModalTitle');
+        const modalSubtitle = document.getElementById('studentRecordModalSubtitle');
+        if (!modal || !modalBody) return;
+
+        activeStudentRecord = null;
+        if (modalTitle) modalTitle.textContent = 'Student Record';
+        if (modalSubtitle) modalSubtitle.textContent = 'Loading student details...';
+        modalBody.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-border text-primary mb-3" role="status"></div><div>Loading student record...</div></div>';
+        modal.show();
+
+        const formData = new FormData();
+        formData.append('action', 'get_student_details');
+        formData.append('student_id', String(studentId));
+
+        try {
+            const data = await adminPostAction(formData);
+            activeStudentRecord = data;
+            renderStudentRecord(data);
+        } catch (error) {
+            if (modalTitle) modalTitle.textContent = 'Student Record';
+            if (modalSubtitle) modalSubtitle.textContent = 'Unable to load student details';
+            modalBody.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(error.message || 'Unable to load the student record.')}</div>`;
+        }
+    }
+
+    async function handleStudentEnrollmentSave(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        if (!form) return;
+
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (submitButton) submitButton.disabled = true;
+
+        const formData = new FormData(form);
+        formData.append('action', 'update_student_record');
+
+        try {
+            const data = await adminPostAction(formData);
+            alert(data.message);
+            window.location.reload();
+        } catch (error) {
+            alert(error.message || 'Unable to save the enrollment changes.');
+        } finally {
+            if (submitButton) submitButton.disabled = false;
+        }
+    }
+
+    async function handleStudentPasswordReset() {
+        const studentId = activeStudentRecord && activeStudentRecord.student ? activeStudentRecord.student.stud_id : null;
+        if (!studentId) return;
+
+        if (!confirm('Reset this student\'s password and generate a temporary password?')) {
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('action', 'reset_student_password');
+        formData.append('student_id', String(studentId));
+
+        try {
+            const data = await adminPostAction(formData);
+            alert(`${data.message}\nTemporary password: ${data.temporary_password}\n${data.email_status}`);
+        } catch (error) {
+            alert(error.message || 'Unable to reset the student password.');
+        }
+    }
+
+    async function handleStudentDirectMessage(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        if (!form) return;
+
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (submitButton) submitButton.disabled = true;
+
+        const formData = new FormData(form);
+        formData.append('action', 'send_direct_message');
+
+        try {
+            const data = await adminPostAction(formData);
+            form.reset();
+            if (activeStudentRecord) {
+                const existingMessages = Array.isArray(activeStudentRecord.recent_messages) ? activeStudentRecord.recent_messages : [];
+                activeStudentRecord.recent_messages = [data.saved_message].concat(existingMessages).slice(0, 10);
+                renderStudentRecord(activeStudentRecord);
+            }
+            alert(`${data.message}\n${data.email_status}`);
+        } catch (error) {
+            alert(error.message || 'Unable to send the direct message.');
+        } finally {
+            if (submitButton) submitButton.disabled = false;
+        }
+    }
 
     function renderAdminGreeting() {
         const greetingNode = document.getElementById('admin-greeting-label');
@@ -2435,12 +3991,7 @@ $recentActivity = array_slice($notifications, 0, 4);
             return;
         }
 
-        showView('departments');
-        renderAdminSectionStudents(match.deptId, match.section);
-
-        window.requestAnimationFrame(() => {
-            highlightNotificationTarget(`[data-student-id="${notification.student_id}"]`);
-        });
+        openStudentRecord(notification.student_id);
     }
     
     function renderNotifications() {
@@ -2672,9 +4223,9 @@ $recentActivity = array_slice($notifications, 0, 4);
             else if (s.enrollment_status === 'Verified') enrollBadge = '<span class="badge bg-success">Verified</span>';
             else if (s.enrollment_status === 'Rejected') enrollBadge = '<span class="badge bg-danger">Rejected</span>';
 
-            let actionBtn = '';
+            let actionBtn = '<button type="button" class="btn btn-sm btn-primary" onclick="openStudentRecord(' + s.stud_id + ')"><i class="fas fa-id-card me-1"></i> Open Record</button>';
             if (s.enrollment_id) {
-                actionBtn = '<a href="verify_enrollment.php?id=' + s.enrollment_id + '" class="btn btn-sm btn-outline-primary ms-2">View Enrollment</a>';
+                actionBtn += '<a href="verify_enrollment.php?id=' + s.enrollment_id + '" class="btn btn-sm btn-outline-primary ms-2">View Enrollment</a>';
             }
 
             rows +=
@@ -2682,6 +4233,7 @@ $recentActivity = array_slice($notifications, 0, 4);
                     '<td>' +
                         '<div class="fw-semibold">' + s.name + '</div>' +
                         '<div class="small text-muted"><span class="me-2">' + s.email + '</span></div>' +
+                        '<div class="small text-muted">Student No. ' + (s.student_number || 'Not set') + ' - Year ' + s.year_level + '</div>' +
                     '</td>' +
                     '<td>' + getAdminStatusBadge(s.waiver_status) + '</td>' +
                     '<td>' + getAdminStatusBadge(s.agreement_status) + '</td>' +
@@ -2716,6 +4268,33 @@ $recentActivity = array_slice($notifications, 0, 4);
             '</div>';
     }
 </script>
+<!-- Student Record Modal -->
+<div class="modal fade" id="studentRecordModal" tabindex="-1" aria-labelledby="studentRecordModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="studentRecordModalTitle">Student Record</h5>
+                    <div class="small text-muted" id="studentRecordModalSubtitle">Loading student details...</div>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <a href="#" id="studentRecordEnrollmentLink" class="btn btn-outline-primary btn-sm d-none" target="_blank" rel="noopener noreferrer">
+                        <i class="fas fa-file-alt me-1"></i>View Enrollment
+                    </a>
+                    <button type="button" class="btn btn-outline-warning btn-sm" id="studentResetPasswordBtn">
+                        <i class="fas fa-key me-1"></i>Reset Password
+                    </button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+            </div>
+            <div class="modal-body" id="studentRecordBody">
+                <div class="text-center py-5 text-muted">
+                    Select a student to view the full record.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 <!-- Profile Modal -->
 <div class="modal fade" id="profileModal" tabindex="-1" style="z-index: 10000;">
     <div class="modal-dialog modal-dialog-centered">

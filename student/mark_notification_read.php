@@ -45,6 +45,24 @@ if (($data['action'] ?? '') === 'mark_all') {
     $stmt->execute();
     $stmt->close();
 
+    $check_announcements = $conn->query("SHOW TABLES LIKE 'student_announcements'");
+    if ($check_announcements instanceof mysqli_result && $check_announcements->num_rows > 0) {
+        $stmt = $conn->prepare("
+            INSERT IGNORE INTO notification_reads (student_id, notification_type, reference_id)
+            SELECT ?, 'announcement', announcement_id
+            FROM student_announcements
+            WHERE student_id = ?
+        ");
+
+        if (!$stmt) {
+            respond_json(['success' => false, 'error' => $conn->error], 500);
+        }
+
+        $stmt->bind_param("ii", $student_id, $student_id);
+        $stmt->execute();
+        $stmt->close();
+    }
+
     /* Org notifications removed */
 
     $stmt = $conn->prepare("
@@ -67,7 +85,7 @@ if (($data['action'] ?? '') === 'mark_all') {
 
 $type = trim((string) ($data['type'] ?? ''));
 $id = intval($data['id'] ?? 0);
-$allowed_types = ['task', 'certificate'];
+$allowed_types = ['task', 'certificate', 'announcement'];
 
 if (!in_array($type, $allowed_types, true) || $id <= 0) {
     respond_json(['success' => false, 'message' => 'Invalid parameters'], 400);

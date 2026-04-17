@@ -449,15 +449,15 @@ if (!function_exists('rserves_student_schema_identifier')) {
             $new_task_id = $stmt->insert_id;
             $stmt->close();
 
-            $stmt2 = $conn->prepare("
-                INSERT INTO student_tasks (task_id, student_id, status, assigned_at)
-                VALUES (?, ?, 'Pending', NOW())
+$stmt2 = $conn->prepare("
+                INSERT INTO student_tasks (task_id, student_id, status, approval_status, assigned_at)
+                VALUES (?, ?, 'Pending', 'Pending Approval', NOW())
             ");
             if (!$stmt2) {
                 throw new RuntimeException($conn->error);
             }
 
-            $stmt2->bind_param("ii", $new_task_id, $student_id);
+$stmt2->bind_param("iii", $new_task_id, $student_id, $student_id);
             if (!$stmt2->execute()) {
                 $stmt2_error = $stmt2->error;
                 $stmt2->close();
@@ -546,7 +546,8 @@ if (!function_exists('rserves_student_schema_identifier')) {
             FROM student_tasks st
             INNER JOIN tasks t ON st.task_id = t.task_id
             LEFT JOIN instructors i ON t.instructor_id = i.inst_id
-            WHERE st.student_id = ?
+WHERE st.student_id = ?
+              AND st.approval_status = 'Approved'
               AND COALESCE(st.student_view_status, 'active') = 'active'
               AND COALESCE(t.is_deleted, 0) = 0
             ORDER BY COALESCE(t.created_at, st.assigned_at) DESC, st.stask_id DESC

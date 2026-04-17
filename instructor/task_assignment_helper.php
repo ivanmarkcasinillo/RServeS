@@ -858,9 +858,9 @@ if (!function_exists('rserves_instructor_extract_student_task_ids_from_activity'
             $insert_task->close();
 
             if (!empty($assignments)) {
-                $insert_assignment = $conn->prepare("
-                    INSERT INTO student_tasks (student_id, task_id, status, assigned_at)
-                    VALUES (?, ?, 'Pending', NOW())
+$insert_assignment = $conn->prepare("
+                    INSERT INTO student_tasks (student_id, task_id, status, approval_status, assigned_at)
+                    VALUES (?, ?, 'Pending', 'Pending Approval', NOW())
                 ");
 
                 if (!$insert_assignment) {
@@ -873,7 +873,7 @@ if (!function_exists('rserves_instructor_extract_student_task_ids_from_activity'
                         continue;
                     }
 
-                    $insert_assignment->bind_param("ii", $student_id, $new_task_id);
+$insert_assignment->bind_param("iii", $student_id, $new_task_id, $student_id);
                     if (!$insert_assignment->execute()) {
                         $insert_assignment_error = $insert_assignment->error;
                         $insert_assignment->close();
@@ -1060,10 +1060,11 @@ if (!function_exists('rserves_instructor_extract_student_task_ids_from_activity'
             ];
         }
 
-        $update_stmt = $conn->prepare("
+$update_stmt = $conn->prepare("
             UPDATE student_tasks
             SET student_id = ?,
                 status = 'Pending',
+                approval_status = 'Pending Approval',
                 assigned_at = NOW(),
                 completed_at = NULL,
                 student_view_status = 'active',

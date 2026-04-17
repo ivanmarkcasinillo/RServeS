@@ -222,8 +222,8 @@ if (isset($_POST['create_verbal_task'])) {
             $new_task_id = $stmt->insert_id;
             $stmt->close();
             
-            $stmt2 = $conn->prepare("INSERT INTO student_tasks (task_id, student_id, status, assigned_at) VALUES (?, ?, 'Pending', NOW())");
-            $stmt2->bind_param("ii", $new_task_id, $student_id);
+INSERT INTO student_tasks (task_id, student_id, status, approval_status, assigned_at) VALUES (?, ?, 'Pending', 'Pending Approval', NOW())
+$stmt2->bind_param("iii", $new_task_id, $student_id, $student_id);
             $stmt2->execute();
             $stmt2->close();
             

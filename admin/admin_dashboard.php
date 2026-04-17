@@ -1340,7 +1340,9 @@ function adminDashboardRelativeTime($timestamp) {
     return date('M j, Y', $createdAt);
 }
 
-$pendingApprovals = 0;
+$pendingApprovalsQuery = $conn->query("SELECT COUNT(*) as count FROM student_tasks st JOIN tasks t ON st.task_id = t.task_id WHERE st.approval_status = 'Pending Approval'");
+$pendingApprovalsRow = $pendingApprovalsQuery->fetch_assoc();
+$pendingApprovals = intval($pendingApprovalsRow['count'] ?? 0);
 $verifiedDocuments = 0;
 $totalExpectedDocuments = $totalStudents * 3;
 $totalReadyStudents = 0;

@@ -8,6 +8,9 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['role'] !== 'Student') {
     exit;
 }
 
+header("Location: change_password.php");
+exit;
+
 $student_id = $_SESSION['stud_id'] ?? null;
 if (!$student_id) {
     die("Student ID not found in session.");
@@ -465,40 +468,7 @@ $profile_data = [
         </div>
     </form>
 
-    <!-- Change Password Section -->
-    <div class="section-title">Change Password</div>
-    <form method="POST" class="mt-3">
-        <input type="hidden" name="change_password" value="1">
-        <div class="row">
-            <div class="col-md-4">
-                <label class="info-label">Current Password</label>
-                <div class="password-container">
-                    <input type="password" name="current_password" class="form-control mb-3" required>
-                    <i class="fas fa-eye-slash password-toggle-icon" onclick="togglePasswordVisibility(this, 'current_password')"></i>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <label class="info-label">New Password</label>
-                <div class="password-container">
-                    <input type="password" id="new_password_change" name="new_password" class="form-control mb-3" required>
-                    <i class="fas fa-eye-slash password-toggle-icon" onclick="togglePasswordVisibility(this, 'new_password_change')"></i>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <label class="info-label">Confirm New Password</label>
-                <div class="password-container">
-                    <input type="password" id="confirm_password_change" name="confirm_password" class="form-control mb-3" required>
-                    <i class="fas fa-eye-slash password-toggle-icon" onclick="togglePasswordVisibility(this, 'confirm_password_change')"></i>
-                </div>
-            </div>
-        </div>
-        <div class="text-center mt-3">
-            <button type="submit" class="btn btn-warning btn-lg px-5">
-                🔑 Change Password
-            </button>
-        </div>
-    </form>
-</div>
+
 
 <script>
 function togglePasswordVisibility(icon, fieldId) {

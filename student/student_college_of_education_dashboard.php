@@ -3484,10 +3484,13 @@ if (isset($_GET['view']) && in_array($_GET['view'], $allowed_dashboard_views, tr
                     <div class="alert alert-info text-start">
                         <small>You haven't submitted your enrollment form yet.</small>
                     </div>
-                    <a href="enrolment.php" class="btn btn-primary w-100">
+                    <a href="enrollment_update.php" class="btn btn-primary w-100">
                         <i class="fas fa-file-contract me-1"></i> Submit Enrollment
                     </a>
                 <?php endif; ?>
+                <a href="change_password.php" class="btn btn-outline-secondary w-100 mt-2">
+                    <i class="fas fa-key me-1"></i> Change Password
+                </a>
             </div>
         </div>
     </div>
